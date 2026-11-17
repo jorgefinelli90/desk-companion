@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Desk Companion – Instalador</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#262a33;--txt:#e9ecf1;--mut:#8b93a3;--acc:#7cc4ff}
+*{box-sizing:border-box}body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+main{max-width:760px;margin:0 auto;padding:28px 16px}h1{margin:0 0 4px;font-size:28px}h2{font-size:18px;margin:0 0 10px}
+.mut{color:var(--mut)}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin:16px 0}
+ol{padding-left:20px;margin:0}li{margin:6px 0}a{color:var(--acc)}code{background:#0d0f13;padding:2px 6px;border-radius:6px}
+esp-web-install-button button[slot=activate]{background:var(--acc);color:#04121f;border:0;border-radius:12px;padding:14px 22px;font-size:17px;font-weight:700;cursor:pointer}
+.dl{display:inline-block;margin:6px 8px 0 0;padding:9px 14px;border:1px solid var(--line);border-radius:10px;text-decoration:none}
+img{width:100%;border-radius:12px;border:1px solid var(--line)}
+</style></head><body><main>
+<h1>Desk Companion</h1>
+<div class="mut">Firmware v__VERSION__ · ESP32-C3 Super Mini + OLED 1.3" + táctil</div>
+
+<div class="card">
+<h2>1. Instalar por USB (la primera vez)</h2>
+<ol>
+<li>Abrí esta página en <b>Chrome o Edge desde una computadora</b>.</li>
+<li>Conectá la placa por USB-C y tocá el botón. Elegí el puerto que aparece (USB JTAG/serial).</li>
+<li>Si no aparece ningún puerto: desenchufala, mantené apretado <b>BOOT</b>, enchufala y soltá el botón.</li>
+</ol>
+<p><esp-web-install-button manifest="manifest.json">
+<button slot="activate">⚡ Instalar Desk Companion</button>
+<span slot="unsupported">Tu navegador no soporta Web Serial. Usá Chrome o Edge en una computadora.</span>
+<span slot="not-allowed">Abrí la página por https.</span>
+</esp-web-install-button></p>
+<p class="mut">Alternativa: en <a href="https://espressif.github.io/esptool-js/" target="_blank">esptool-js</a>, cargá <code>factory.bin</code> en la dirección <code>0x0</code>.</p>
+</div>
+
+<div class="card">
+<h2>2. Conectarlo al WiFi</h2>
+<ol>
+<li>Desde el celular, conectate a la red <code>DeskBuddy-XXXX</code> (clave <code>deskbuddy</code>).</li>
+<li>Abrí <code>192.168.4.1</code> → Ajustes → Buscar redes, elegí la tuya y tocá <i>Conectar</i>.</li>
+<li>Listo: lo encontrás en <a href="http://deskbuddy.local">http://deskbuddy.local</a> o en la IP que muestra la pantalla (mantené el sensor 1,5 s).</li>
+</ol>
+</div>
+
+<div class="card">
+<h2>3. Actualizar por WiFi (OTA)</h2>
+<ol>
+<li>Bajá <a href="ota.bin" download="desk-companion_v__VERSION___ota.bin">ota.bin</a>.</li>
+<li>Entrá a <a href="http://deskbuddy.local/ota">http://deskbuddy.local/ota</a> (usuario <code>admin</code>, clave <code>deskbuddy</code>).</li>
+<li>Elegí el archivo y tocá <i>Subir y actualizar</i>. Los mensajes y la cara elegida se mantienen.</li>
+</ol>
+<a class="dl" href="ota.bin" download="desk-companion_v__VERSION___ota.bin">⬇ ota.bin (WiFi)</a>
+<a class="dl" href="factory.bin" download="desk-companion_v__VERSION___factory.bin">⬇ factory.bin (USB, 0x0)</a>
+</div>
+
+<div class="card"><h2>Expresiones</h2><img src="expresiones.png" alt="Las 23 expresiones"></div>
+</main></body></html>

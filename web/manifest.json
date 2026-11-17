@@ -1,0 +1,11 @@
+{
+  "name": "Desk Companion",
+  "version": "__VERSION__",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-C3",
+      "parts": [{ "path": "factory.bin", "offset": 0 }]
+    }
+  ]
+}

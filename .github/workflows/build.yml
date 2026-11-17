@@ -1,0 +1,71 @@
+name: Compilar firmware
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Instalar PlatformIO
+        run: pip install platformio esptool==4.8.1
+
+      - name: Compilar
+        run: pio run -e esp32c3
+
+      - name: Armar factory.bin y ota.bin
+        run: |
+          VER=$(grep -oP 'FW_VERSION\s+"\K[^"]+' DeskCompanion/config.h)
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          B=.pio/build/esp32c3
+          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -1)
+          mkdir -p site
+          cp -r web/* site/
+          cp expresiones.png site/
+          esptool.py --chip esp32c3 merge_bin -o site/factory.bin \
+            --flash_mode keep --flash_freq keep --flash_size keep \
+            0x0 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$BOOT_APP0" 0x10000 $B/firmware.bin
+          cp $B/firmware.bin site/ota.bin
+          sed -i "s/__VERSION__/$VER/g" site/index.html site/manifest.json
+          ls -la site
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desk-companion-v${{ env.VER }}
+          path: site/*.bin
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
