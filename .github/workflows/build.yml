@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -49,12 +49,28 @@ jobs:
             0x0 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$BOOT_APP0" 0x10000 $B/firmware.bin
           cp $B/firmware.bin site/ota.bin
           sed -i "s/__VERSION__/$VER/g" site/index.html site/manifest.json
+          mkdir -p release
+          cp site/ota.bin release/desk-companion_ota.bin
+          cp site/factory.bin release/desk-companion_factory.bin
           ls -la site
 
       - uses: actions/upload-artifact@v4
         with:
           name: desk-companion-v${{ env.VER }}
           path: site/*.bin
+
+      - name: Publicar release con los .bin
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VER }}
+          name: Desk Companion v${{ env.VER }}
+          body: |
+            - **desk-companion_ota.bin**: actualizar por WiFi en http://deskbuddy.local/ota (mantiene WiFi y ajustes)
+            - **desk-companion_factory.bin**: primera instalación por USB, dirección 0x0
+          files: |
+            release/desk-companion_ota.bin
+            release/desk-companion_factory.bin
+          make_latest: true
 
       - uses: actions/upload-pages-artifact@v3
         with:

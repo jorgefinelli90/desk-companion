@@ -488,10 +488,7 @@ void renderFrame(uint32_t now) {
       case MODE_INFO:      drawInfo(); break;
       case MODE_SETUP:     drawSetup(); break;
     }
-    if (mode == MODE_FACE) {
-      drawWifiHint(now);
-      drawToast(now);
-    }
+    if (mode == MODE_FACE) drawWifiHint(now);   // sin textos debajo de las caras
   }
   u8g2.sendBuffer();
 }
