@@ -2,13 +2,11 @@
 //  Desk Companion - firmware propio
 //  ESP32-C3 Super Mini + OLED 1.3" SH1106 + sensor tactil TTP223
 //
-//  - 23 expresiones animadas (se elige una y queda fija)
+//  - 23 expresiones animadas: fija o automatica segun la hora del dia
 //  - Mensajeria local: cualquiera en tu red entra a http://deskbuddy.local
 //    (o a la IP) y manda un mensaje que aparece en la pantalla
-//  - Tactil: tap = reacciona / descarta mensaje
-//            doble tap = siguiente expresion
-//            mantener 1.5 s = info de red
-//            mantener 10 s = borrar WiFi
+//  - Tactil: tap = siguiente expresion / cierra el mensaje
+//            mantener 1.5 s = info de red y hora
 //  - Actualizacion OTA desde el navegador: http://deskbuddy.local/ota
 // ============================================================================
 #include <Arduino.h>
@@ -21,9 +19,12 @@
 #include <Update.h>
 #include <U8g2lib.h>
 #include <vector>
+#include <time.h>
+#include <esp_system.h>
 
 #include "config.h"
 #include "face.h"
+#include "schedule.h"
 #include "webui.h"
 
 #ifdef USE_SSD1306
@@ -51,10 +52,15 @@ uint32_t reactionUntil = 0;
 String toastText;
 uint32_t toastUntil = 0;
 
+bool autoMode = true;          // caras segun la hora
+uint32_t nextAutoAt = 0;
+int lastSlot = -1;
+
 bool apMode = false;
+bool online = false;
 String apSsid, staSsid, staPass;
-bool staRetrying = false;
-uint32_t staRetryAt = 0;
+uint32_t staBeginAt = 0, offlineSince = 0;
+String resetReason;
 
 bool otaRunning = false;
 size_t otaDone = 0, otaTotal = 0;
@@ -62,6 +68,7 @@ int otaShown = -1;
 
 bool touchDown = false;
 uint32_t touchAt = 0;
+int touchIdle = LOW;           // nivel en reposo (se detecta al arrancar)
 
 struct Msg {
   uint32_t id;
@@ -78,6 +85,7 @@ const uint8_t* msgFont = u8g2_font_6x12_tf;
 int msgLineH = 12;
 bool msgCentered = false;
 uint32_t msgShownAt = 0;
+uint32_t msgDuration = MSG_SHOW_MS;
 
 // ============================================================================
 //  Utilidades de texto
@@ -204,13 +212,53 @@ void setMode(Mode m) { mode = m; modeAt = millis(); }
 // ============================================================================
 //  Expresiones
 // ============================================================================
-void setExpression(uint8_t i, bool toast = true) {
+void setExpression(uint8_t i, bool toast = true, bool persist = true) {
   if (i >= EXPR_COUNT) return;
   savedExpr = i;
   reactionUntil = 0;
   face.set(i);
-  prefs.putUChar("expr", i);
+  if (persist) prefs.putUChar("expr", i);
   if (toast) showToast(EXPRESSIONS[i].name);
+}
+
+void setAutoMode(bool on) {
+  autoMode = on;
+  prefs.putBool("auto", on);
+  lastSlot = -1;                       // fuerza elegir cara de la franja ya
+  nextAutoAt = 0;
+}
+
+bool timeValid() { return time(nullptr) > 1700000000; }
+
+int currentHour() {
+  if (!timeValid()) return -1;
+  struct tm t;
+  time_t now = time(nullptr);
+  localtime_r(&now, &t);
+  return t.tm_hour;
+}
+
+String clockText() {
+  if (!timeValid()) return "--:--";
+  struct tm t;
+  time_t now = time(nullptr);
+  localtime_r(&now, &t);
+  char b[8];
+  snprintf(b, sizeof(b), "%02d:%02d", t.tm_hour, t.tm_min);
+  return b;
+}
+
+// Modo automatico: cada AUTO_CHANGE_MIN minutos (o al cambiar de franja)
+// elige una cara de la franja horaria actual.
+void autoTick(uint32_t now) {
+  if (!autoMode || mode != MODE_FACE || reactionUntil) return;
+  int h = currentHour();
+  if (h < 0) return;                   // todavia sin hora (sin WiFi)
+  int slot = scheduleSlot(h);
+  if (slot == lastSlot && now < nextAutoAt) return;
+  lastSlot = slot;
+  nextAutoAt = now + AUTO_CHANGE_MIN * 60000UL;
+  setExpression(pickForSlot(slot, savedExpr), false, false);
 }
 
 void react() {
@@ -238,15 +286,18 @@ int unreadCount() {
   return n;
 }
 
+void startIntro() {
+  reactionUntil = 0;
+  face.set(savedExpr, true);
+  u8g2.setContrast(255);               // flashazo a brillo maximo
+  setMode(MODE_MSG_INTRO);
+}
+
 uint32_t addMessage(const String& from, const String& text) {
   Msg m{nextMsgId++, from, text, millis(), false};
   msgs.push_back(m);
   while (msgs.size() > MSG_HISTORY) msgs.erase(msgs.begin());
-  if (mode != MODE_MSG && mode != MODE_MSG_INTRO) {
-    reactionUntil = 0;
-    face.set(savedExpr, true);
-    setMode(MODE_MSG_INTRO);
-  }
+  if (mode != MODE_MSG && mode != MODE_MSG_INTRO) startIntro();
   return m.id;
 }
 
@@ -262,9 +313,14 @@ void prepareMessage(const Msg& m) {
     msgFont = u8g2_font_6x12_tf; msgLineH = 12; msgCentered = false;
   }
   msgShownAt = millis();
+  // 15 s, o mas si el texto es largo y necesita una pasada completa de scroll
+  int overflow = (int)msgLines.size() * msgLineH - (64 - 14);
+  uint32_t scrollTime = overflow > 0 ? 2200 * 2 + overflow * 45 : 0;
+  msgDuration = max((uint32_t)MSG_SHOW_MS, scrollTime + 500);
 }
 
 void openNextMessage() {
+  u8g2.setContrast(brightness);        // fin del flash
   int i = firstUnread();
   if (i < 0) { setMode(MODE_FACE); return; }
   currentMsgId = msgs[i].id;
@@ -275,8 +331,8 @@ void openNextMessage() {
 void dismissMessage() {
   int i = findMsg(currentMsgId);
   if (i >= 0) msgs[i].read = true;
-  openNextMessage();
-  if (mode == MODE_FACE) react();     // contento de haberlo leido
+  if (firstUnread() >= 0) startIntro();   // hay otro: flash y lo muestra
+  else { setMode(MODE_FACE); react(); }   // contento de haberlo leido
 }
 
 // ============================================================================
@@ -294,6 +350,10 @@ void drawEnvelope(int x, int y, int w, int h) {
 
 void drawMsgIntro(uint32_t now) {
   uint32_t e = now - modeAt;
+  if (e < 700 && (e / 117) % 2 == 0) {  // 3 destellos de pantalla completa
+    u8g2.drawBox(0, 0, 128, 64);
+    return;
+  }
   int bounce = (int)(fabsf(sinf(e * 0.008f)) * -6);
   int s = e < 250 ? (int)(e / 250.f * 36) : 36;      // aparece creciendo
   if (s < 4) s = 4;
@@ -317,12 +377,13 @@ void drawMsgIntro(uint32_t now) {
   drawCentered("Mensaje de", 48);
   u8g2.setFont(u8g2_font_helvB08_tf);
   if (i >= 0) drawCentered(msgs[i].from, 61);
-  if (e > 1700) openNextMessage();
+  if (e > MSG_FLASH_MS) openNextMessage();
 }
 
 void drawMessage(uint32_t now) {
   int i = findMsg(currentMsgId);
   if (i < 0) { openNextMessage(); return; }
+  if (now - msgShownAt > msgDuration) { dismissMessage(); return; }   // vuelve a las caras
   const Msg& m = msgs[i];
 
   // cabecera invertida
@@ -366,19 +427,25 @@ void drawMessage(uint32_t now) {
 
 void drawInfo() {
   u8g2.setFont(u8g2_font_helvB10_tf);
-  drawCentered(devName, 12);
+  u8g2.drawUTF8(0, 12, devName.c_str());
+  String c = clockText();
+  u8g2.drawStr(128 - u8g2.getStrWidth(c.c_str()), 12, c.c_str());
   u8g2.drawHLine(0, 16, 128);
   u8g2.setFont(u8g2_font_6x10_tf);
-  if (apMode) {
+  if (online) {
+    u8g2.drawUTF8(0, 28, ("WiFi: " + WiFi.SSID()).c_str());
+    u8g2.drawUTF8(0, 39, ("IP: " + WiFi.localIP().toString()).c_str());
+    u8g2.drawUTF8(0, 50, MDNS_NAME ".local");
+  } else if (apMode) {
     u8g2.drawUTF8(0, 28, ("Red: " + apSsid).c_str());
     u8g2.drawUTF8(0, 39, "Clave: " AP_PASSWORD);
     u8g2.drawUTF8(0, 50, ("IP: " + WiFi.softAPIP().toString()).c_str());
   } else {
-    u8g2.drawUTF8(0, 28, ("WiFi: " + WiFi.SSID()).c_str());
-    u8g2.drawUTF8(0, 39, ("IP: " + WiFi.localIP().toString()).c_str());
-    u8g2.drawUTF8(0, 50, MDNS_NAME ".local");
+    u8g2.drawUTF8(0, 28, staSsid.length() ? ("Buscando " + staSsid).c_str() : "Sin WiFi");
   }
-  u8g2.drawUTF8(0, 61, ("Mensajes: " + String(msgs.size()) + "   v" FW_VERSION).c_str());
+  String last = String(autoMode ? "Auto" : "Fija") + "  v" FW_VERSION;
+  if (resetReason.length()) last += " " + resetReason;
+  u8g2.drawUTF8(0, 61, last.c_str());
 }
 
 void drawSetup() {
@@ -392,17 +459,6 @@ void drawSetup() {
   u8g2.drawUTF8(0, 57, "2. Abrí 192.168.4.1");
 }
 
-void drawResetCountdown(uint32_t held) {
-  u8g2.setFont(u8g2_font_helvB08_tf);
-  drawCentered("Soltá para cancelar", 20);
-  u8g2.setFont(u8g2_font_6x10_tf);
-  int left = (10000 - (int)held) / 1000 + 1;
-  if (left < 0) left = 0;
-  drawCentered("Borrando WiFi en " + String(left), 40);
-  u8g2.drawFrame(14, 50, 100, 8);
-  u8g2.drawBox(16, 52, constrain((int)((held - 4000) * 96 / 6000), 0, 96), 4);
-}
-
 void drawToast(uint32_t now) {
   if (now >= toastUntil) return;
   u8g2.setFont(u8g2_font_6x10_tf);
@@ -412,14 +468,19 @@ void drawToast(uint32_t now) {
   u8g2.drawUTF8(x + 5, 60, toastText.c_str());
 }
 
+// Iconito de WiFi titilando arriba al centro mientras busca el router
+void drawWifiHint(uint32_t now) {
+  if (online || !staSsid.length() || (now / 600) % 2) return;
+  for (int r = 2; r <= 6; r += 2)
+    u8g2.drawCircle(64, 8, r, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  u8g2.drawPixel(64, 8);
+}
+
 void renderFrame(uint32_t now) {
   u8g2.clearBuffer();
   u8g2.setDrawColor(1);
   u8g2.setFontMode(1);
-  uint32_t held = touchDown ? now - touchAt : 0;
-  if (held > 4000) {
-    drawResetCountdown(held);
-  } else {
+  {
     switch (mode) {
       case MODE_FACE:      face.draw(now); break;
       case MODE_MSG_INTRO: drawMsgIntro(now); break;
@@ -427,7 +488,10 @@ void renderFrame(uint32_t now) {
       case MODE_INFO:      drawInfo(); break;
       case MODE_SETUP:     drawSetup(); break;
     }
-    if (mode == MODE_FACE) drawToast(now);
+    if (mode == MODE_FACE) {
+      drawWifiHint(now);
+      drawToast(now);
+    }
   }
   u8g2.sendBuffer();
 }
@@ -441,13 +505,12 @@ void onTap() {
     case MODE_MSG_INTRO: openNextMessage(); break;
     case MODE_INFO:
     case MODE_SETUP:     setMode(MODE_FACE); break;
-    case MODE_FACE:      react(); break;
+    case MODE_FACE:
+      // pasa a la siguiente cara; en modo automatico queda hasta el proximo cambio
+      setExpression((savedExpr + 1) % EXPR_COUNT, true, !autoMode);
+      if (autoMode) nextAutoAt = millis() + AUTO_CHANGE_MIN * 60000UL;
+      break;
   }
-}
-
-void onDoubleTap() {
-  if (mode != MODE_FACE) { onTap(); return; }
-  setExpression((savedExpr + 1) % EXPR_COUNT);
 }
 
 void forgetWifi() {
@@ -464,28 +527,27 @@ void forgetWifi() {
 
 void handleTouch(uint32_t now) {
   static bool infoFired = false;
-  static uint8_t taps = 0;
   static uint32_t lastRelease = 0;
-  bool raw = digitalRead(PIN_TOUCH) == TOUCH_ACTIVE;
+  bool raw = digitalRead(PIN_TOUCH) != touchIdle;
 
-  if (raw && !touchDown) { touchDown = true; touchAt = now; infoFired = false; }
-  if (raw && touchDown) {
+  if (raw && !touchDown) {
+    if (now - lastRelease < 40) return;          // antirrebote
+    touchDown = true; touchAt = now; infoFired = false;
+  } else if (raw && touchDown) {
     uint32_t held = now - touchAt;
     if (held > 1500 && !infoFired && (mode == MODE_FACE || mode == MODE_SETUP)) {
       infoFired = true;
       reactionUntil = 0; face.set(savedExpr, true);
       setMode(MODE_INFO);
     }
-  }
-  if (!raw && touchDown) {
+    if (held > 20000) {                          // sensor trabado o en modo "toggle": recalibra
+      touchIdle = digitalRead(PIN_TOUCH);
+      touchDown = false;
+    }
+  } else if (!raw && touchDown) {
     touchDown = false;
-    uint32_t held = now - touchAt;
-    if (held >= 10000) forgetWifi();
-    else if (!infoFired && held > 25 && held < 800) { taps++; lastRelease = now; }
-  }
-  if (taps && !touchDown && now - lastRelease > 280) {
-    if (taps >= 2) onDoubleTap(); else onTap();
-    taps = 0;
+    lastRelease = now;
+    if (!infoFired && now - touchAt > 20) onTap();
   }
 }
 
@@ -503,73 +565,64 @@ void startMDNS() {
   if (MDNS.begin(MDNS_NAME)) MDNS.addService("http", "tcp", 80);
 }
 
-void startAP() {
+void startAP(bool showSetup) {
+  if (apMode) return;
   apMode = true;
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(apSsid.c_str(), AP_PASSWORD);
   lowerTxPower();
-  delay(100);
+  WiFi.softAP(apSsid.c_str(), AP_PASSWORD);
   dns.start(53, "*", WiFi.softAPIP());
   startMDNS();
-  setMode(MODE_SETUP);
+  if (showSetup) setMode(MODE_SETUP);
 }
 
-void drawStatus(const String& a, const String& b) {
-  u8g2.clearBuffer();
-  face.draw(millis());
-  u8g2.setDrawColor(0); u8g2.drawBox(0, 44, 128, 20); u8g2.setDrawColor(1);
-  u8g2.setFont(u8g2_font_6x10_tf);
-  drawCentered(a, 53);
-  drawCentered(b, 63);
-  u8g2.sendBuffer();
+void staBegin() {
+  WiFi.disconnect();
+  WiFi.begin(staSsid.c_str(), staPass.c_str());
+  lowerTxPower();
+  staBeginAt = millis();
 }
 
+void onOnline() {
+  online = true;
+  if (apMode) {                        // ya no hace falta la red propia
+    dns.stop();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    lowerTxPower();
+    apMode = false;
+    if (mode == MODE_SETUP) setMode(MODE_FACE);
+  }
+  startMDNS();
+  configTzTime(TZ_INFO, "pool.ntp.org", "time.google.com");
+  showToast("WiFi OK");
+  Serial.printf("WiFi conectado: %s\n", WiFi.localIP().toString().c_str());
+}
+
+// Nunca bloquea: las caras se ven desde el arranque y el WiFi se conecta solo.
 void startWiFi() {
   WiFi.persistent(false);
   WiFi.setHostname(MDNS_NAME);
+  WiFi.setAutoReconnect(true);
+  offlineSince = millis();
   if (staSsid.length()) {
     WiFi.mode(WIFI_STA);
-    WiFi.begin(staSsid.c_str(), staPass.c_str());
-    lowerTxPower();
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_TIMEOUT) {
-      drawStatus("Conectando a", staSsid);
-      delay(30);
-    }
-    if (WiFi.status() == WL_CONNECTED) {
-      apMode = false;
-      WiFi.setAutoReconnect(true);
-      startMDNS();
-      setMode(MODE_INFO);           // muestra la IP unos segundos
-      return;
-    }
-    WiFi.disconnect();
+    lowerTxPower();                    // ANTES de conectar: evita reinicios por pico de consumo
+    staBegin();
+  } else {
+    startAP(true);                     // primera vez: pantalla de configuracion
   }
-  startAP();
 }
 
-// En modo AP con una red guardada, reintenta el router cada tanto
-// (por si se corto la luz y el router tardo mas en arrancar).
-void wifiMaintenance(uint32_t now) {
-  if (!apMode || !staSsid.length()) return;
-  if (!staRetrying && now - staRetryAt > 90000 && WiFi.softAPgetStationNum() == 0) {
-    staRetrying = true; staRetryAt = now;
-    WiFi.begin(staSsid.c_str(), staPass.c_str());
-  }
-  if (staRetrying) {
-    if (WiFi.status() == WL_CONNECTED) {
-      staRetrying = false; apMode = false;
-      dns.stop();
-      WiFi.softAPdisconnect(true);
-      WiFi.mode(WIFI_STA);
-      startMDNS();
-      if (mode == MODE_SETUP) setMode(MODE_FACE);
-      showToast("WiFi conectado");
-    } else if (now - staRetryAt > 12000) {
-      staRetrying = false; staRetryAt = now;
-      WiFi.disconnect(false);
-    }
-  }
+void wifiLoop(uint32_t now) {
+  if (!staSsid.length()) return;
+  bool up = WiFi.status() == WL_CONNECTED;
+  if (up && !online) onOnline();
+  if (!up && online) { online = false; offlineSince = now; }
+  if (up) return;
+  bool apBusy = apMode && WiFi.softAPgetStationNum() > 0;   // no molestar si alguien configura
+  if (!apBusy && now - staBeginAt > 15000) staBegin();
+  if (!apMode && now - offlineSince > WIFI_AP_AFTER) startAP(false);
 }
 
 // ============================================================================
@@ -586,10 +639,13 @@ void handleState() {
   j.reserve(3500);
   j += "{\"name\":\"" + jsonEsc(devName) + "\"";
   j += ",\"expr\":\"" + String(EXPRESSIONS[savedExpr].id) + "\"";
-  j += ",\"ap\":" + String(apMode ? "true" : "false");
-  j += ",\"ssid\":\"" + jsonEsc(apMode ? apSsid : WiFi.SSID()) + "\"";
-  j += ",\"ip\":\"" + (apMode ? WiFi.softAPIP() : WiFi.localIP()).toString() + "\"";
-  j += ",\"rssi\":" + String(apMode ? 0 : WiFi.RSSI());
+  j += ",\"ap\":" + String(!online && apMode ? "true" : "false");
+  j += ",\"online\":" + String(online ? "true" : "false");
+  j += ",\"ssid\":\"" + jsonEsc(online ? WiFi.SSID() : (apMode ? apSsid : staSsid)) + "\"";
+  j += ",\"ip\":\"" + (online ? WiFi.localIP() : WiFi.softAPIP()).toString() + "\"";
+  j += ",\"rssi\":" + String(online ? WiFi.RSSI() : 0);
+  j += ",\"auto\":" + String(autoMode ? "true" : "false");
+  j += ",\"time\":\"" + clockText() + "\"";
   j += ",\"bright\":" + String(brightness);
   j += ",\"flip\":" + String(flipped ? "true" : "false");
   j += ",\"unread\":" + String(unreadCount());
@@ -612,12 +668,20 @@ void handleState() {
   sendJson(j);
 }
 
+void handleAuto() {
+  bool on = server.arg("on") != "0";
+  setAutoMode(on);
+  if (on) showToast("Modo automatico");
+  sendJson(String("{\"ok\":true,\"auto\":") + (on ? "true" : "false") + "}");
+}
+
 void handleExpr() {
   String id = server.arg("id");
   int i = exprIndexById(id.c_str());
   if (i < 0 && id.length() && isDigit(id[0])) i = id.toInt();
   if (i < 0 || i >= EXPR_COUNT) { sendJson("{\"ok\":false,\"error\":\"expresion desconocida\"}", 400); return; }
   if (mode == MODE_INFO || mode == MODE_SETUP) setMode(MODE_FACE);
+  if (autoMode) setAutoMode(false);    // elegida a mano: queda fija
   setExpression(i);
   sendJson("{\"ok\":true}");
 }
@@ -696,7 +760,7 @@ void handleClear() {
 }
 
 void handleNotFound() {
-  if (apMode) {                         // portal cautivo
+  if (apMode && !online) {              // portal cautivo
     server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
     server.send(302, "text/plain", "");
   } else {
@@ -773,6 +837,7 @@ void setupServer() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", INDEX_HTML); });
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/expr", HTTP_ANY, handleExpr);
+  server.on("/api/auto", HTTP_ANY, handleAuto);
   server.on("/api/msg", HTTP_ANY, handleMsg);
   server.on("/api/settings", HTTP_POST, handleSettings);
   server.on("/api/scan", HTTP_GET, handleScan);
@@ -790,12 +855,17 @@ void setup() {
   Serial.begin(115200);
   pinMode(PIN_TOUCH, INPUT);
   randomSeed(esp_random());
+  int highs = 0;                       // nivel del sensor en reposo (sirve para TTP223 activo alto o bajo)
+  for (int k = 0; k < 20; k++) { highs += digitalRead(PIN_TOUCH); delay(2); }
+  touchIdle = highs > 10 ? HIGH : LOW;
+  if (esp_reset_reason() == ESP_RST_BROWNOUT) resetReason = "!Volt";
 
   prefs.begin("deskbuddy", false);
   devName    = prefs.getString("name", "Desk Buddy");
   brightness = prefs.getUChar("bright", 160);
   flipped    = prefs.getBool("flip", false);
   savedExpr  = prefs.getUChar("expr", 0);
+  autoMode   = prefs.getBool("auto", true);
   if (savedExpr >= EXPR_COUNT) savedExpr = 0;
   staSsid = prefs.getString("ssid", "");
   staPass = prefs.getString("pass", "");
@@ -812,11 +882,10 @@ void setup() {
   u8g2.setFlipMode(flipped);
 
   face.begin(&u8g2, exprIndexById("sleeping"));
+  face.set(savedExpr);                // se "despierta" con la expresion guardada
   startWiFi();
   setupServer();
-  face.set(savedExpr);                // se "despierta" con la expresion guardada
-  Serial.printf("Desk Buddy v" FW_VERSION " listo. IP: %s\n",
-                (apMode ? WiFi.softAPIP() : WiFi.localIP()).toString().c_str());
+  Serial.printf("Desk Buddy v" FW_VERSION " listo (touch reposo=%d)\n", touchIdle);
 }
 
 void loop() {
@@ -825,7 +894,8 @@ void loop() {
   server.handleClient();
   if (otaRunning) { delay(1); return; }   // durante la OTA no se toca nada mas
   handleTouch(now);
-  wifiMaintenance(now);
+  wifiLoop(now);
+  autoTick(now);
 
   if (reactionUntil && now > reactionUntil) { reactionUntil = 0; face.set(savedExpr); }
   if (mode == MODE_INFO && now - modeAt > 7000) setMode(MODE_FACE);

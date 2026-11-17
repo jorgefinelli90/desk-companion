@@ -46,29 +46,35 @@ Se conservan la cara elegida, el WiFi y los ajustes.
 
 ## Uso
 
+**Caras según la hora (modo automático, viene activado):** cada 10 minutos elige una cara de la franja horaria. Más alegre desde las 9, se va cansando y enojando hacia las 18, y duerme de noche. La tabla está en `DeskCompanion/schedule.h` y la zona horaria en `config.h` (`TZ_INFO`, viene Argentina). Para que funcione necesita WiFi, porque toma la hora de internet.
+
 **Página web** (`http://deskbuddy.local`)
-- Tocás una expresión y queda fija; se guarda aunque lo desenchufes.
+- **🕘 Automático por hora**: lo prende o lo apaga.
+- Tocar una cara la deja **fija** y apaga el modo automático. Se guarda aunque lo desenchufes.
 - Mandar mensaje: nombre + texto (hasta 280 caracteres), con atajos rápidos y la opción de cambiar la cara junto con el mensaje.
-- Historial con ✓ entregado / ✓✓ visto (pasa a *visto* cuando alguien toca el sensor).
-- Ajustes: nombre, brillo, rotar la pantalla 180°, WiFi.
+- Historial con ✓ entregado / ✓✓ visto.
+- Ajustes: nombre, brillo, rotar la pantalla 180°, WiFi, actualizar firmware.
 
 **Sensor táctil**
 | Gesto | Acción |
 |---|---|
-| Tap | Con un mensaje en pantalla: lo marca como leído y pasa al siguiente. Sobre la cara: hace una reacción feliz durante 2.5 s |
-| Doble tap | Pasa a la siguiente expresión |
-| Mantener 1.5 s | Muestra IP / red |
-| Mantener 10 s | Borra el WiFi (a partir de los 4 s aparece una cuenta regresiva; si soltás, se cancela) |
+| Tap | Pasa a la siguiente cara (o cierra el mensaje que se está mostrando) |
+| Mantener 1.5 s | Muestra la hora, la red y la IP |
 
-**Mensajes en pantalla**: primero aparece un sobre animado con "Mensaje de X". Si el texto es corto se ve en letra grande; si es largo, en letra chica con scroll automático. El mensaje queda en pantalla hasta que alguien lo toca, y si hay más arriba se indica con `+N`.
+El nivel del sensor en reposo se detecta solo al arrancar, así que anda tanto con TTP223 activo alto como activo bajo. No lo toques mientras lo enchufás.
+
+**Cuando llega un mensaje:** la pantalla destella en blanco a brillo máximo durante 2 s, aparece el sobre con "Mensaje de X" y después el texto. El texto queda **15 segundos** (o más si es muy largo y necesita terminar el scroll) y vuelve solo a las caras. Si hay más mensajes, sigue con el siguiente. Tocando el sensor se cierra antes.
 Se aceptan acentos, ñ, ¿ y ¡. Los emojis comunes se pasan a texto (❤️ → `<3`, 😊 → `:)`, 👍 → `(y)`).
+
+**WiFi:** las caras aparecen apenas lo enchufás y el WiFi se conecta solo en segundo plano. Mientras busca, titila un iconito arriba al centro. Si en 1 minuto no encuentra el router, además abre la red `DeskBuddy-XXXX` para que puedas reconfigurarlo, y sigue intentando con el router. Para olvidar el WiFi: Ajustes → *Olvidar WiFi*.
 
 ## API (para scripts, atajos del celu, Home Assistant, etc.)
 
 ```bash
 curl "http://deskbuddy.local/api/msg?from=Ana&text=Hola!"
 curl "http://deskbuddy.local/api/msg?from=Bot&text=Deploy%20OK&expr=excited"
-curl "http://deskbuddy.local/api/expr?id=sleepy"
+curl "http://deskbuddy.local/api/expr?id=sleepy"   # deja la cara fija
+curl "http://deskbuddy.local/api/auto?on=1"        # vuelve al modo por hora
 curl "http://deskbuddy.local/api/state"
 ```
 

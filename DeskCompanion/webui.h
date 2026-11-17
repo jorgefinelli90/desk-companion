@@ -16,6 +16,7 @@ h1{font-size:20px;margin:0}.mut{color:var(--mut);font-size:13px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px}
 .ex{background:#11141a;border:1px solid var(--line);border-radius:12px;padding:8px 4px;color:var(--txt);cursor:pointer;font-size:12px}
 .ex b{display:block;font-size:26px;font-weight:400}.ex.on{border-color:var(--acc);background:#132131}
+.ex.auto{width:100%;margin-bottom:10px;font-size:14px;padding:10px}.ex.auto b{font-size:22px}
 input,textarea,select{width:100%;background:#0d0f13;border:1px solid var(--line);border-radius:10px;color:var(--txt);padding:10px;font:inherit}
 textarea{resize:vertical;min-height:76px}
 .row{display:flex;gap:8px;align-items:center;margin-top:8px}.row>*{flex:1}
@@ -32,7 +33,9 @@ details summary{cursor:pointer;color:var(--mut)}label{display:block;font-size:13
 </style></head><body><main>
 <header><div id="face">🙂</div><div><h1 id="nm">Desk Buddy</h1><div class="mut" id="st">conectando…</div></div></header>
 
-<section class="card"><h2>Expresión</h2><div class="grid" id="grid"></div></section>
+<section class="card"><h2>Expresión</h2>
+<button class="ex auto" id="auto"><b>🕘</b>Automático por hora<br><span class="mut">más alegre a la mañana, cansado a las 18</span></button>
+<div class="grid" id="grid"></div></section>
 
 <section class="card"><h2>Mandar mensaje</h2>
 <input id="from" maxlength="16" placeholder="Tu nombre">
@@ -66,12 +69,13 @@ const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&qu
 function ago(s){if(s<60)return'hace '+s+'s';if(s<3600)return'hace '+Math.floor(s/60)+' min';return'hace '+Math.floor(s/3600)+' h'}
 function build(){const g=$('#grid'),m=$('#mexpr');
  S.exprs.forEach(x=>{const b=document.createElement('button');b.className='ex';b.dataset.id=x.id;b.innerHTML='<b>'+x.emoji+'</b>'+esc(x.name);
-  b.onclick=async()=>{await api('/api/expr',{id:x.id});toast(x.emoji+' '+x.name);load()};g.appendChild(b);
+  b.onclick=async()=>{await api('/api/expr',{id:x.id});toast(x.emoji+' '+x.name+' (fija)');load()};g.appendChild(b);
   const o=document.createElement('option');o.value=x.id;o.textContent=x.emoji+' '+x.name;m.appendChild(o)});
  $('#ver').textContent=S.version;$('#sname').value=S.name;$('#bright').value=S.bright;$('#bv').textContent=S.bright;$('#flip').checked=S.flip;built=true}
 function render(){if(!built)build();
  const cur=S.exprs.find(x=>x.id==S.expr)||S.exprs[0];$('#face').textContent=cur.emoji;$('#nm').textContent=S.name;document.title=S.name;
- $('#st').textContent=(S.ap?'Modo AP · '+S.ssid:'WiFi '+S.ssid+' · '+S.ip)+(S.unread?' · '+S.unread+' sin leer':'');
+ $('#st').textContent=S.time+' · '+(S.online?'WiFi '+S.ssid+' · '+S.ip:(S.ap?'Modo AP · '+S.ssid:'buscando '+S.ssid))+(S.unread?' · '+S.unread+' sin leer':'');
+ $('#auto').classList.toggle('on',S.auto);
  document.querySelectorAll('.ex').forEach(b=>b.classList.toggle('on',b.dataset.id==S.expr));
  const L=$('#msgs');if(!S.msgs.length){L.innerHTML='Sin mensajes todavía.';return}
  L.innerHTML=S.msgs.slice().reverse().map(m=>'<div class="msg"><div class="h"><span>'+esc(m.from)+' · '+ago(m.ago)+'</span><span class="'+(m.read?'seen':'')+'">'+(m.read?'✓✓ visto':'✓ entregado')+'</span></div><p>'+esc(m.text)+'</p></div>').join('')}
@@ -82,6 +86,7 @@ $('#from').value=localStorage.getItem('db_from')||'';
 $('#send').onclick=async()=>{const text=$('#text').value.trim();if(!text)return toast('Escribí algo');
  const from=$('#from').value.trim()||'Anónimo';localStorage.setItem('db_from',from);
  const r=await api('/api/msg',{from,text,expr:$('#mexpr').value});if(r.ok){$('#text').value='';upd();toast('Enviado ✉️');load()}else toast(r.error||'Error')};
+$('#auto').onclick=async()=>{await api('/api/auto',{on:S.auto?0:1});toast(S.auto?'Cara fija':'🕘 Automático por hora');load()};
 $('#bright').oninput=e=>$('#bv').textContent=e.target.value;
 $('#save').onclick=async()=>{await api('/api/settings',{name:$('#sname').value,bright:$('#bright').value,flip:$('#flip').checked?1:0});toast('Guardado');load()};
 $('#clear').onclick=async()=>{if(confirm('¿Borrar todos los mensajes?')){await api('/api/clear',{});load()}};
