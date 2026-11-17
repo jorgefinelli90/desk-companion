@@ -67,6 +67,11 @@ El nivel del sensor en reposo se detecta solo al arrancar, así que anda tanto c
 
 **Reloj (opcional):** en la web, sección *Extras*, se activa *Mostrar el reloj*. Aparece cada 30 s durante 5 s; los dos valores se pueden cambiar.
 
+**Apagado nocturno (opcional):** en *Extras → 🌙 Apagar la pantalla de noche* se elige desde qué hora hasta qué hora (por ejemplo, de 23:00 a 07:00; puede cruzar la medianoche). De noche:
+- tocando el sensor, la pantalla se prende 15 s;
+- los mensajes que llegan esperan y se muestran apenas se prende (a la mañana o con un toque), salvo que marques *Prender igual si llega un mensaje*;
+- el WiFi sigue funcionando, así que la web y los mensajes andan igual.
+
 **Modo compañero (opcional):** cada tanto (por defecto unos 20 min, al azar) hace una cara y le dice algo a Kharlita en un globito: "¡Hola Kharlita!!", "¡Buen día, Kharlita!", "¿Tomaste agua, Kharlita?"... Las frases cambian según la hora y de noche no habla. El nombre se puede cambiar en la web, y las frases se editan en `DeskCompanion/companion.h`.
 
 Se aceptan acentos, ñ, ¿ y ¡. Los emojis comunes se pasan a texto (❤️ → `<3`, 😊 → `:)`, 👍 → `(y)`).

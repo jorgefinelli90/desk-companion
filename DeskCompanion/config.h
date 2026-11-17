@@ -1,5 +1,5 @@
 #pragma once
-#define FW_VERSION     "1.2.0"       // subilo en cada cambio: se ve en la web y en la OTA
+#define FW_VERSION     "1.3.0"       // subilo en cada cambio: se ve en la web y en la OTA
 
 // Clave para la pagina de actualizacion http://deskbuddy.local/ota
 #define OTA_USER       "admin"
@@ -39,4 +39,5 @@
 #define SCROLL_PAUSE_MS 1500         // mensajes largos: pausa arriba/abajo
 #define SCROLL_PX_MS   40            // mensajes largos: ms por pixel de desplazamiento
 #define BUDDY_FACE_MS  2000          // modo companero: cuanto se ve la cara
+#define NIGHT_WAKE_MS  15000         // de noche, un toque prende la pantalla este tiempo
 #define BUDDY_TEXT_MS  5000          // modo companero: cuanto se ve la frase

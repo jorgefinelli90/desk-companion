@@ -59,6 +59,14 @@ uint16_t clockEvery = 30;      // cada cuantos segundos
 uint8_t clockFor = 5;          // cuantos segundos se ve
 uint32_t lastClockEnd = 0;
 
+// Apagado nocturno
+bool nightOn = false;
+uint16_t nightFrom = 23 * 60;  // minutos desde medianoche
+uint16_t nightTo = 7 * 60;
+bool nightMsgs = false;        // si llega un mensaje de noche, ¿se prende a mostrarlo?
+bool screenOff = false;
+uint32_t wakeUntil = 0;        // un toque de noche la prende un rato
+
 // Modo companero
 bool buddyOn = false;
 uint8_t buddyEvery = 20;       // minutos promedio entre interacciones
@@ -269,6 +277,30 @@ String clockText() {
   return b;
 }
 
+bool isNightTime() {
+  if (!nightOn || !timeValid() || nightFrom == nightTo) return false;
+  struct tm t;
+  time_t tt = time(nullptr);
+  localtime_r(&tt, &t);
+  uint16_t m = t.tm_hour * 60 + t.tm_min;
+  if (nightFrom < nightTo) return m >= nightFrom && m < nightTo;
+  return m >= nightFrom || m < nightTo;          // cruza la medianoche (ej. 23:00 -> 07:00)
+}
+
+String hhmm(uint16_t m) {
+  char b[6];
+  snprintf(b, sizeof(b), "%02d:%02d", m / 60, m % 60);
+  return b;
+}
+
+int parseHHMM(const String& s) {
+  int c = s.indexOf(':');
+  if (c < 1) return -1;
+  int h = s.substring(0, c).toInt(), m = s.substring(c + 1).toInt();
+  if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+  return h * 60 + m;
+}
+
 // Modo automatico: cada AUTO_CHANGE_MIN minutos (o al cambiar de franja)
 // elige una cara de la franja horaria actual.
 void autoTick(uint32_t now) {
@@ -318,7 +350,8 @@ uint32_t addMessage(const String& from, const String& text) {
   Msg m{nextMsgId++, from, text, millis(), false};
   msgs.push_back(m);
   while (msgs.size() > MSG_HISTORY) msgs.erase(msgs.begin());
-  if (mode != MODE_MSG && mode != MODE_MSG_INTRO) startIntro();
+  bool quiet = isNightTime() && !nightMsgs && since(wakeUntil, millis()) > 0;
+  if (!quiet && mode != MODE_MSG && mode != MODE_MSG_INTRO) startIntro();   // de noche espera a la manana
   return m.id;
 }
 
@@ -640,7 +673,13 @@ void handleTouch(uint32_t now) {
   } else if (!raw && touchDown) {
     touchDown = false;
     lastRelease = now;
-    if (!infoFired && now - touchAt > 20) onTap();
+    if (!infoFired && now - touchAt > 20) {
+      if (screenOff) wakeUntil = now + NIGHT_WAKE_MS;     // de noche: solo prende la pantalla un rato
+      else {
+        if (isNightTime()) wakeUntil = now + NIGHT_WAKE_MS; // y cada toque estira ese rato
+        onTap();
+      }
+    }
   }
 }
 
@@ -745,6 +784,11 @@ void handleState() {
   j += ",\"buddy\":" + String(buddyOn ? "true" : "false");
   j += ",\"buddyEvery\":" + String(buddyEvery);
   j += ",\"owner\":\"" + jsonEsc(owner) + "\"";
+  j += ",\"night\":" + String(nightOn ? "true" : "false");
+  j += ",\"nightFrom\":\"" + hhmm(nightFrom) + "\"";
+  j += ",\"nightTo\":\"" + hhmm(nightTo) + "\"";
+  j += ",\"nightMsgs\":" + String(nightMsgs ? "true" : "false");
+  j += ",\"screenOff\":" + String(screenOff ? "true" : "false");
   j += ",\"bright\":" + String(brightness);
   j += ",\"flip\":" + String(flipped ? "true" : "false");
   j += ",\"unread\":" + String(unreadCount());
@@ -839,6 +883,23 @@ void handleSettings() {
     o.replace("\n", " ");
     if (o.length()) { owner = o; prefs.putString("owner", o); }
   }
+  if (server.hasArg("night")) {
+    nightOn = server.arg("night").toInt() != 0;
+    prefs.putBool("night", nightOn);
+  }
+  if (server.hasArg("nightFrom")) {
+    int m = parseHHMM(server.arg("nightFrom"));
+    if (m >= 0) { nightFrom = m; prefs.putUShort("nFrom", nightFrom); }
+  }
+  if (server.hasArg("nightTo")) {
+    int m = parseHHMM(server.arg("nightTo"));
+    if (m >= 0) { nightTo = m; prefs.putUShort("nTo", nightTo); }
+  }
+  if (server.hasArg("nightMsgs")) {
+    nightMsgs = server.arg("nightMsgs").toInt() != 0;
+    prefs.putBool("nMsg", nightMsgs);
+  }
+  wakeUntil = 0;
   scheduleBuddy(millis());
   sendJson("{\"ok\":true}");
 }
@@ -1004,6 +1065,10 @@ void setup() {
   buddyOn    = prefs.getBool("buddy", false);
   buddyEvery = prefs.getUChar("budEv", 20);
   owner      = prefs.getString("owner", "Kharlita");
+  nightOn    = prefs.getBool("night", false);
+  nightFrom  = prefs.getUShort("nFrom", 23 * 60);
+  nightTo    = prefs.getUShort("nTo", 7 * 60);
+  nightMsgs  = prefs.getBool("nMsg", false);
   if (savedExpr >= EXPR_COUNT) savedExpr = 0;
   staSsid = prefs.getString("ssid", "");
   staPass = prefs.getString("pass", "");
@@ -1027,12 +1092,25 @@ void setup() {
   Serial.printf("Desk Buddy v" FW_VERSION " listo (touch reposo=%d)\n", touchIdle);
 }
 
+void nightTick(uint32_t now) {
+  bool showingMsg = mode == MODE_MSG || mode == MODE_MSG_INTRO;
+  bool off = isNightTime() && !showingMsg && since(wakeUntil, now) > 0;
+  if (off == screenOff) return;
+  screenOff = off;
+  u8g2.setPowerSave(off);
+  if (off) {
+    if (mode != MODE_FACE) setMode(MODE_FACE);
+  } else if (firstUnread() >= 0 && !showingMsg) {
+    startIntro();                      // se prende con mensajes pendientes: los muestra
+  }
+}
+
 void periodicScreens(uint32_t now) {
   if (mode == MODE_CLOCK && since(modeAt, now) > clockFor * 1000UL) {
     lastClockEnd = now;
     setMode(MODE_FACE);
   }
-  if (mode != MODE_FACE || reactionUntil) return;
+  if (mode != MODE_FACE || reactionUntil || screenOff) return;
   if (buddyOn && nextBuddyAt && since(nextBuddyAt, now) > 0) {
     scheduleBuddy(now);
     startBuddy(now);
@@ -1049,6 +1127,7 @@ void loop() {
   handleTouch(now);
   wifiLoop(now);
   autoTick(now);
+  nightTick(now);
   periodicScreens(now);
 
   if (reactionUntil && since(reactionUntil, now) > 0) { reactionUntil = 0; face.set(savedExpr); }
@@ -1057,7 +1136,7 @@ void loop() {
 
   static uint32_t lastFrame = 0;
   now = millis();
-  if (!otaRunning && now - lastFrame >= 33) {        // ~30 fps
+  if (!otaRunning && !screenOff && now - lastFrame >= 33) {   // ~30 fps
     lastFrame = now;
     renderFrame(now);
   }
