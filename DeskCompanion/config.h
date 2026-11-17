@@ -1,5 +1,5 @@
 #pragma once
-#define FW_VERSION     "1.1.1"       // subilo en cada cambio: se ve en la web y en la OTA
+#define FW_VERSION     "1.2.0"       // subilo en cada cambio: se ve en la web y en la OTA
 
 // Clave para la pagina de actualizacion http://deskbuddy.local/ota
 #define OTA_USER       "admin"
@@ -35,4 +35,8 @@
 #define MSG_MAX_LEN    280
 #define FROM_MAX_LEN   16
 #define MSG_SHOW_MS    15000         // cuanto queda el mensaje en pantalla
-#define MSG_FLASH_MS   2000          // flash a brillo maximo al llegar
+#define MSG_INTRO_MS   3000          // animacion de "mensaje nuevo" (a brillo maximo)
+#define SCROLL_PAUSE_MS 1500         // mensajes largos: pausa arriba/abajo
+#define SCROLL_PX_MS   40            // mensajes largos: ms por pixel de desplazamiento
+#define BUDDY_FACE_MS  2000          // modo companero: cuanto se ve la cara
+#define BUDDY_TEXT_MS  5000          // modo companero: cuanto se ve la frase

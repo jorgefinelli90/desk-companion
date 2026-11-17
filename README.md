@@ -63,7 +63,12 @@ Se conservan la cara elegida, el WiFi y los ajustes.
 
 El nivel del sensor en reposo se detecta solo al arrancar, así que anda tanto con TTP223 activo alto como activo bajo. No lo toques mientras lo enchufás.
 
-**Cuando llega un mensaje:** la pantalla destella en blanco a brillo máximo durante 2 s, aparece el sobre con "Mensaje de X" y después el texto. El texto queda **15 segundos** (o más si es muy largo y necesita terminar el scroll) y vuelve solo a las caras. Si hay más mensajes, sigue con el siguiente. Tocando el sensor se cierra antes.
+**Cuando llega un mensaje:** durante 3 s la pantalla destella en blanco y muestra el sobre con "Mensaje de X", a brillo máximo. Después aparece el texto. Si es largo, se desplaza solo hacia abajo hasta el final, hace una pausa y vuelve a empezar. Queda 15 s (o más si hace falta para leerlo entero) y vuelve a las caras. Tocando el sensor se cierra antes.
+
+**Reloj (opcional):** en la web, sección *Extras*, se activa *Mostrar el reloj*. Aparece cada 30 s durante 5 s; los dos valores se pueden cambiar.
+
+**Modo compañero (opcional):** cada tanto (por defecto unos 20 min, al azar) hace una cara y le dice algo a Kharlita en un globito: "¡Hola Kharlita!!", "¡Buen día, Kharlita!", "¿Tomaste agua, Kharlita?"... Las frases cambian según la hora y de noche no habla. El nombre se puede cambiar en la web, y las frases se editan en `DeskCompanion/companion.h`.
+
 Se aceptan acentos, ñ, ¿ y ¡. Los emojis comunes se pasan a texto (❤️ → `<3`, 😊 → `:)`, 👍 → `(y)`).
 
 **WiFi:** las caras aparecen apenas lo enchufás y el WiFi se conecta solo en segundo plano. Mientras busca, titila un iconito arriba al centro. Si en 1 minuto no encuentra el router, además abre la red `DeskBuddy-XXXX` para que puedas reconfigurarlo, y sigue intentando con el router. Para olvidar el WiFi: Ajustes → *Olvidar WiFi*.

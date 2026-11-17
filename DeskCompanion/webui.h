@@ -26,6 +26,8 @@ button.sec{background:#222731;color:var(--txt);border:1px solid var(--line);bord
 .msg{border-top:1px solid var(--line);padding:9px 0}.msg:first-child{border:0}
 .msg .h{display:flex;justify-content:space-between;font-size:12px;color:var(--mut)}.seen{color:var(--ok)}
 .msg p{margin:3px 0 0;white-space:pre-wrap;word-break:break-word}
+.sw{display:flex;align-items:center;gap:8px;color:var(--txt);font-size:15px;margin:2px 0 4px}.sw input{width:auto;transform:scale(1.3)}
+hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 details summary{cursor:pointer;color:var(--mut)}label{display:block;font-size:13px;color:var(--mut);margin-top:10px}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#222731;border:1px solid var(--line);padding:9px 14px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none}
 #toast.show{opacity:1}code{background:#0d0f13;padding:2px 5px;border-radius:6px;font-size:12px}
@@ -44,6 +46,18 @@ details summary{cursor:pointer;color:var(--mut)}label{display:block;font-size:13
 <div class="row"><select id="mexpr"><option value="">Sin cambiar la cara</option></select>
 <button class="main" id="send" style="flex:0 0 auto">Enviar ✉️</button></div>
 <div class="mut" id="cnt" style="margin-top:6px">0/280</div></section>
+
+<section class="card"><h2>Extras</h2>
+<label class="sw"><input type="checkbox" id="clock"> 🕒 Mostrar el reloj</label>
+<div class="row"><div><label>cada (segundos)</label><input type="number" id="clockEvery" min="5" max="3600"></div>
+<div><label>durante (segundos)</label><input type="number" id="clockFor" min="1" max="60"></div></div>
+<hr>
+<label class="sw"><input type="checkbox" id="buddy"> 💬 Modo compañero</label>
+<div class="mut">Cada tanto hace una cara y te dice algo (“¡Hola Kharlita!!”).</div>
+<div class="row"><div><label>Nombre</label><input id="owner" maxlength="16"></div>
+<div><label>cada (minutos, aprox.)</label><input type="number" id="buddyEvery" min="1" max="240"></div></div>
+<div class="row"><button class="main" id="saveX">Guardar</button><button class="sec" id="testB">Probar ahora</button></div>
+</section>
 
 <section class="card"><h2>Mensajes</h2><div id="msgs" class="mut">Sin mensajes todavía.</div></section>
 
@@ -71,7 +85,9 @@ function build(){const g=$('#grid'),m=$('#mexpr');
  S.exprs.forEach(x=>{const b=document.createElement('button');b.className='ex';b.dataset.id=x.id;b.innerHTML='<b>'+x.emoji+'</b>'+esc(x.name);
   b.onclick=async()=>{await api('/api/expr',{id:x.id});toast(x.emoji+' '+x.name+' (fija)');load()};g.appendChild(b);
   const o=document.createElement('option');o.value=x.id;o.textContent=x.emoji+' '+x.name;m.appendChild(o)});
- $('#ver').textContent=S.version;$('#sname').value=S.name;$('#bright').value=S.bright;$('#bv').textContent=S.bright;$('#flip').checked=S.flip;built=true}
+ $('#ver').textContent=S.version;
+ $('#clock').checked=S.clock;$('#clockEvery').value=S.clockEvery;$('#clockFor').value=S.clockFor;
+ $('#buddy').checked=S.buddy;$('#buddyEvery').value=S.buddyEvery;$('#owner').value=S.owner;$('#sname').value=S.name;$('#bright').value=S.bright;$('#bv').textContent=S.bright;$('#flip').checked=S.flip;built=true}
 function render(){if(!built)build();
  const cur=S.exprs.find(x=>x.id==S.expr)||S.exprs[0];$('#face').textContent=cur.emoji;$('#nm').textContent=S.name;document.title=S.name;
  $('#st').textContent=S.time+' · '+(S.online?'WiFi '+S.ssid+' · '+S.ip:(S.ap?'Modo AP · '+S.ssid:'buscando '+S.ssid))+(S.unread?' · '+S.unread+' sin leer':'');
@@ -87,6 +103,9 @@ $('#send').onclick=async()=>{const text=$('#text').value.trim();if(!text)return 
  const from=$('#from').value.trim()||'Anónimo';localStorage.setItem('db_from',from);
  const r=await api('/api/msg',{from,text,expr:$('#mexpr').value});if(r.ok){$('#text').value='';upd();toast('Enviado ✉️');load()}else toast(r.error||'Error')};
 $('#auto').onclick=async()=>{await api('/api/auto',{on:S.auto?0:1});toast(S.auto?'Cara fija':'🕘 Automático por hora');load()};
+$('#saveX').onclick=async()=>{await api('/api/settings',{clock:$('#clock').checked?1:0,clockEvery:$('#clockEvery').value,clockFor:$('#clockFor').value,
+ buddy:$('#buddy').checked?1:0,buddyEvery:$('#buddyEvery').value,owner:$('#owner').value});toast('Guardado');load()};
+$('#testB').onclick=async()=>{await api('/api/buddy',{});toast('💬 Mirá la pantalla')};
 $('#bright').oninput=e=>$('#bv').textContent=e.target.value;
 $('#save').onclick=async()=>{await api('/api/settings',{name:$('#sname').value,bright:$('#bright').value,flip:$('#flip').checked?1:0});toast('Guardado');load()};
 $('#clear').onclick=async()=>{if(confirm('¿Borrar todos los mensajes?')){await api('/api/clear',{});load()}};

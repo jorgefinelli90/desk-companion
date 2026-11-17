@@ -25,6 +25,7 @@
 #include "config.h"
 #include "face.h"
 #include "schedule.h"
+#include "companion.h"
 #include "webui.h"
 
 #ifdef USE_SSD1306
@@ -39,7 +40,7 @@ Preferences prefs;
 FaceEngine face;
 
 // ---------------------------------------------------------------- estado
-enum Mode { MODE_FACE, MODE_MSG_INTRO, MODE_MSG, MODE_INFO, MODE_SETUP };
+enum Mode { MODE_FACE, MODE_MSG_INTRO, MODE_MSG, MODE_INFO, MODE_SETUP, MODE_CLOCK, MODE_BUDDY };
 Mode mode = MODE_FACE;
 uint32_t modeAt = 0;
 
@@ -51,6 +52,20 @@ uint32_t reactionUntil = 0;
 
 String toastText;
 uint32_t toastUntil = 0;
+
+// Reloj periodico
+bool clockOn = false;
+uint16_t clockEvery = 30;      // cada cuantos segundos
+uint8_t clockFor = 5;          // cuantos segundos se ve
+uint32_t lastClockEnd = 0;
+
+// Modo companero
+bool buddyOn = false;
+uint8_t buddyEvery = 20;       // minutos promedio entre interacciones
+String owner = "Kharlita";
+uint32_t nextBuddyAt = 0;
+int buddyPhrase = -1;
+std::vector<String> buddyLines;
 
 bool autoMode = true;          // caras segun la hora
 uint32_t nextAutoAt = 0;
@@ -209,6 +224,12 @@ String jsonEsc(const String& s) {
 void showToast(const String& t, uint32_t ms = 1400) { toastText = t; toastUntil = millis() + ms; }
 void setMode(Mode m) { mode = m; modeAt = millis(); }
 
+// Tiempo transcurrido sin desbordar: si "t" quedo unos ms despues de "now"
+// (pasa cuando el evento llega por la web dentro del mismo ciclo), da 0.
+static inline uint32_t since(uint32_t t, uint32_t now) {
+  return (int32_t)(now - t) < 0 ? 0 : now - t;
+}
+
 // ============================================================================
 //  Expresiones
 // ============================================================================
@@ -314,8 +335,8 @@ void prepareMessage(const Msg& m) {
   }
   msgShownAt = millis();
   // 15 s, o mas si el texto es largo y necesita una pasada completa de scroll
-  int overflow = (int)msgLines.size() * msgLineH - (64 - 14);
-  uint32_t scrollTime = overflow > 0 ? 2200 * 2 + overflow * 45 : 0;
+  int overflow = (int)msgLines.size() * msgLineH - (64 - 14) + 3;
+  uint32_t scrollTime = overflow > 0 ? SCROLL_PAUSE_MS * 2 + overflow * SCROLL_PX_MS : 0;
   msgDuration = max((uint32_t)MSG_SHOW_MS, scrollTime + 500);
 }
 
@@ -349,7 +370,7 @@ void drawEnvelope(int x, int y, int w, int h) {
 }
 
 void drawMsgIntro(uint32_t now) {
-  uint32_t e = now - modeAt;
+  uint32_t e = since(modeAt, now);
   if (e < 700 && (e / 117) % 2 == 0) {  // 3 destellos de pantalla completa
     u8g2.drawBox(0, 0, 128, 64);
     return;
@@ -377,13 +398,14 @@ void drawMsgIntro(uint32_t now) {
   drawCentered("Mensaje de", 48);
   u8g2.setFont(u8g2_font_helvB08_tf);
   if (i >= 0) drawCentered(msgs[i].from, 61);
-  if (e > MSG_FLASH_MS) openNextMessage();
+  if (e > MSG_INTRO_MS) openNextMessage();
 }
 
 void drawMessage(uint32_t now) {
   int i = findMsg(currentMsgId);
   if (i < 0) { openNextMessage(); return; }
-  if (now - msgShownAt > msgDuration) { dismissMessage(); return; }   // vuelve a las caras
+  uint32_t shown = since(msgShownAt, now);
+  if (shown > msgDuration) { dismissMessage(); return; }   // vuelve a las caras
   const Msg& m = msgs[i];
 
   // cabecera invertida
@@ -403,13 +425,13 @@ void drawMessage(uint32_t now) {
   const int top = 14, areaH = 64 - top;
   u8g2.setFont(msgFont);
   int totalH = msgLines.size() * msgLineH;
-  int y0 = top, off = 0, overflow = totalH - areaH;
+  int y0 = top, off = 0, overflow = totalH - areaH + 3;   // +3: que la ultima linea entre entera
   if (overflow <= 0) {
     y0 = top + (areaH - totalH) / 2;
   } else {
-    const uint32_t PAUSE = 2200, PX_MS = 45;
+    const uint32_t PAUSE = SCROLL_PAUSE_MS, PX_MS = SCROLL_PX_MS;
     uint32_t scrollDur = overflow * PX_MS, cycle = PAUSE * 2 + scrollDur;
-    uint32_t e = (now - msgShownAt) % cycle;
+    uint32_t e = shown % cycle;
     off = e < PAUSE ? 0 : e < PAUSE + scrollDur ? (e - PAUSE) / PX_MS : overflow;
     int barH = max(6, areaH * areaH / totalH);
     u8g2.drawBox(126, top + (areaH - barH) * off / overflow, 2, barH);
@@ -476,6 +498,76 @@ void drawWifiHint(uint32_t now) {
   u8g2.drawPixel(64, 8);
 }
 
+// ---------------------------------------------------------------- reloj
+static const char* DIAS[] = {"domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"};
+static const char* MESES[] = {"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"};
+
+void drawClock(uint32_t now) {
+  struct tm t;
+  time_t tt = time(nullptr);
+  localtime_r(&tt, &t);
+  char hh[3], mm[3];
+  snprintf(hh, sizeof(hh), "%02d", t.tm_hour);
+  snprintf(mm, sizeof(mm), "%02d", t.tm_min);
+  u8g2.setFont(u8g2_font_logisoso32_tn);
+  int wd = u8g2.getStrWidth("00"), wc = u8g2.getStrWidth(":");
+  int x = (128 - (wd * 2 + wc + 4)) / 2;
+  u8g2.drawStr(x, 40, hh);
+  if ((now / 500) % 2 == 0) u8g2.drawStr(x + wd + 2, 38, ":");
+  u8g2.drawStr(x + wd + wc + 4, 40, mm);
+  u8g2.setFont(u8g2_font_6x10_tf);
+  String d = String(DIAS[t.tm_wday]) + " " + String(t.tm_mday) + " " + MESES[t.tm_mon];
+  drawCentered(d, 58);
+}
+
+// ---------------------------------------------------------------- companero
+String buddyText(int i) {
+  String s = PHRASES[i].text;
+  s.replace("{n}", owner.c_str());
+  return s;
+}
+
+void startBuddy(uint32_t now) {
+  int i = pickPhrase(currentHour(), buddyPhrase);
+  if (i < 0) return;
+  buddyPhrase = i;
+  int e = exprIndexById(PHRASES[i].expr);
+  if (e >= 0) face.set(e);
+  u8g2.setFont(u8g2_font_helvB10_tf);
+  wrapText(buddyText(i), 112, buddyLines);
+  setMode(MODE_BUDDY);
+}
+
+void scheduleBuddy(uint32_t now) {
+  uint32_t avg = (uint32_t)buddyEvery * 60000UL;          // al azar entre 50% y 150% del promedio
+  nextBuddyAt = now + avg / 2 + (uint32_t)random((long)avg + 1);
+}
+
+// 2 s la cara, despues el globo con la frase 5 s, y vuelve
+void drawBuddy(uint32_t now) {
+  uint32_t e = since(modeAt, now);
+  if (e < BUDDY_FACE_MS) { face.draw(now); return; }
+  if (e > BUDDY_FACE_MS + BUDDY_TEXT_MS) {
+    face.set(savedExpr);
+    setMode(MODE_FACE);
+    face.draw(now);
+    return;
+  }
+  int n = buddyLines.size(), lh = 15, h = n * lh + 8;
+  if (h > 54) h = 54;
+  int y = (54 - h) / 2;
+  u8g2.drawRFrame(2, y, 124, h, 6);
+  u8g2.drawRFrame(3, y + 1, 122, h - 2, 5);
+  int ty = y + h - 1;                                     // colita del globo
+  u8g2.setDrawColor(0); u8g2.drawBox(52, ty - 1, 14, 3); u8g2.setDrawColor(1);
+  u8g2.drawLine(52, ty, 58, 63); u8g2.drawLine(53, ty, 59, 63);
+  u8g2.drawLine(66, ty, 58, 63); u8g2.drawLine(65, ty, 59, 63);
+  u8g2.setFont(u8g2_font_helvB10_tf);
+  int asc = u8g2.getAscent();
+  for (int k = 0; k < n && k < 3; k++)
+    u8g2.drawUTF8((128 - textW(buddyLines[k])) / 2, y + 4 + k * lh + asc + 1, buddyLines[k].c_str());
+}
+
 void renderFrame(uint32_t now) {
   u8g2.clearBuffer();
   u8g2.setDrawColor(1);
@@ -487,6 +579,8 @@ void renderFrame(uint32_t now) {
       case MODE_MSG:       drawMessage(now); break;
       case MODE_INFO:      drawInfo(); break;
       case MODE_SETUP:     drawSetup(); break;
+      case MODE_CLOCK:     drawClock(now); break;
+      case MODE_BUDDY:     drawBuddy(now); break;
     }
     if (mode == MODE_FACE) drawWifiHint(now);   // sin textos debajo de las caras
   }
@@ -501,7 +595,9 @@ void onTap() {
     case MODE_MSG:       dismissMessage(); break;
     case MODE_MSG_INTRO: openNextMessage(); break;
     case MODE_INFO:
-    case MODE_SETUP:     setMode(MODE_FACE); break;
+    case MODE_SETUP:
+    case MODE_CLOCK:     lastClockEnd = millis(); setMode(MODE_FACE); break;
+    case MODE_BUDDY:     face.set(savedExpr); setMode(MODE_FACE); break;
     case MODE_FACE:
       // pasa a la siguiente cara; en modo automatico queda hasta el proximo cambio
       setExpression((savedExpr + 1) % EXPR_COUNT, true, !autoMode);
@@ -618,8 +714,8 @@ void wifiLoop(uint32_t now) {
   if (!up && online) { online = false; offlineSince = now; }
   if (up) return;
   bool apBusy = apMode && WiFi.softAPgetStationNum() > 0;   // no molestar si alguien configura
-  if (!apBusy && now - staBeginAt > 15000) staBegin();
-  if (!apMode && now - offlineSince > WIFI_AP_AFTER) startAP(false);
+  if (!apBusy && since(staBeginAt, now) > 15000) staBegin();
+  if (!apMode && since(offlineSince, now) > WIFI_AP_AFTER) startAP(false);
 }
 
 // ============================================================================
@@ -643,6 +739,12 @@ void handleState() {
   j += ",\"rssi\":" + String(online ? WiFi.RSSI() : 0);
   j += ",\"auto\":" + String(autoMode ? "true" : "false");
   j += ",\"time\":\"" + clockText() + "\"";
+  j += ",\"clock\":" + String(clockOn ? "true" : "false");
+  j += ",\"clockEvery\":" + String(clockEvery);
+  j += ",\"clockFor\":" + String(clockFor);
+  j += ",\"buddy\":" + String(buddyOn ? "true" : "false");
+  j += ",\"buddyEvery\":" + String(buddyEvery);
+  j += ",\"owner\":\"" + jsonEsc(owner) + "\"";
   j += ",\"bright\":" + String(brightness);
   j += ",\"flip\":" + String(flipped ? "true" : "false");
   j += ",\"unread\":" + String(unreadCount());
@@ -711,6 +813,38 @@ void handleSettings() {
     u8g2.setFlipMode(flipped);
     prefs.putBool("flip", flipped);
   }
+  if (server.hasArg("clock")) {
+    clockOn = server.arg("clock").toInt() != 0;
+    prefs.putBool("clk", clockOn);
+    lastClockEnd = millis();
+  }
+  if (server.hasArg("clockEvery")) {
+    clockEvery = constrain((int)server.arg("clockEvery").toInt(), 5, 3600);
+    prefs.putUShort("clkEv", clockEvery);
+  }
+  if (server.hasArg("clockFor")) {
+    clockFor = constrain((int)server.arg("clockFor").toInt(), 1, 60);
+    prefs.putUChar("clkFor", clockFor);
+  }
+  if (server.hasArg("buddy")) {
+    buddyOn = server.arg("buddy").toInt() != 0;
+    prefs.putBool("buddy", buddyOn);
+  }
+  if (server.hasArg("buddyEvery")) {
+    buddyEvery = constrain((int)server.arg("buddyEvery").toInt(), 1, 240);
+    prefs.putUChar("budEv", buddyEvery);
+  }
+  if (server.hasArg("owner")) {
+    String o = sanitize(server.arg("owner"), 16);
+    o.replace("\n", " ");
+    if (o.length()) { owner = o; prefs.putString("owner", o); }
+  }
+  scheduleBuddy(millis());
+  sendJson("{\"ok\":true}");
+}
+
+void handleBuddyTest() {
+  if (mode == MODE_FACE || mode == MODE_CLOCK || mode == MODE_INFO) startBuddy(millis());
   sendJson("{\"ok\":true}");
 }
 
@@ -835,6 +969,7 @@ void setupServer() {
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/expr", HTTP_ANY, handleExpr);
   server.on("/api/auto", HTTP_ANY, handleAuto);
+  server.on("/api/buddy", HTTP_ANY, handleBuddyTest);
   server.on("/api/msg", HTTP_ANY, handleMsg);
   server.on("/api/settings", HTTP_POST, handleSettings);
   server.on("/api/scan", HTTP_GET, handleScan);
@@ -863,6 +998,12 @@ void setup() {
   flipped    = prefs.getBool("flip", false);
   savedExpr  = prefs.getUChar("expr", 0);
   autoMode   = prefs.getBool("auto", true);
+  clockOn    = prefs.getBool("clk", false);
+  clockEvery = prefs.getUShort("clkEv", 30);
+  clockFor   = prefs.getUChar("clkFor", 5);
+  buddyOn    = prefs.getBool("buddy", false);
+  buddyEvery = prefs.getUChar("budEv", 20);
+  owner      = prefs.getString("owner", "Kharlita");
   if (savedExpr >= EXPR_COUNT) savedExpr = 0;
   staSsid = prefs.getString("ssid", "");
   staPass = prefs.getString("pass", "");
@@ -882,23 +1023,40 @@ void setup() {
   face.set(savedExpr);                // se "despierta" con la expresion guardada
   startWiFi();
   setupServer();
+  scheduleBuddy(millis());
   Serial.printf("Desk Buddy v" FW_VERSION " listo (touch reposo=%d)\n", touchIdle);
 }
 
+void periodicScreens(uint32_t now) {
+  if (mode == MODE_CLOCK && since(modeAt, now) > clockFor * 1000UL) {
+    lastClockEnd = now;
+    setMode(MODE_FACE);
+  }
+  if (mode != MODE_FACE || reactionUntil) return;
+  if (buddyOn && nextBuddyAt && since(nextBuddyAt, now) > 0) {
+    scheduleBuddy(now);
+    startBuddy(now);
+    return;
+  }
+  if (clockOn && timeValid() && since(lastClockEnd, now) > clockEvery * 1000UL) setMode(MODE_CLOCK);
+}
+
 void loop() {
-  uint32_t now = millis();
   if (apMode) dns.processNextRequest();
   server.handleClient();
   if (otaRunning) { delay(1); return; }   // durante la OTA no se toca nada mas
+  uint32_t now = millis();                // despues de atender la web (ver since())
   handleTouch(now);
   wifiLoop(now);
   autoTick(now);
+  periodicScreens(now);
 
-  if (reactionUntil && now > reactionUntil) { reactionUntil = 0; face.set(savedExpr); }
-  if (mode == MODE_INFO && now - modeAt > 7000) setMode(MODE_FACE);
-  if (mode == MODE_SETUP && now - modeAt > 45000) setMode(MODE_FACE);
+  if (reactionUntil && since(reactionUntil, now) > 0) { reactionUntil = 0; face.set(savedExpr); }
+  if (mode == MODE_INFO && since(modeAt, now) > 7000) setMode(MODE_FACE);
+  if (mode == MODE_SETUP && since(modeAt, now) > 45000) setMode(MODE_FACE);
 
   static uint32_t lastFrame = 0;
+  now = millis();
   if (!otaRunning && now - lastFrame >= 33) {        // ~30 fps
     lastFrame = now;
     renderFrame(now);
