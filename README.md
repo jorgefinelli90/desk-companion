@@ -52,7 +52,7 @@ Se conservan la cara elegida, el WiFi y los ajustes.
 - **🕘 Automático por hora**: lo prende o lo apaga.
 - Tocar una cara la deja **fija** y apaga el modo automático. Se guarda aunque lo desenchufes.
 - Mandar mensaje: nombre + texto (hasta 280 caracteres), con atajos rápidos y la opción de cambiar la cara junto con el mensaje.
-- Historial con ✓ entregado / ✓✓ visto.
+- Historial con ✓ entregado / ✓✓ visto. Por privacidad, el contenido de los mensajes no aparece en la web (solo quién lo mandó) y se borra de la memoria apenas se lee.
 - Ajustes: nombre, brillo, rotar la pantalla 180°, WiFi, actualizar firmware.
 
 **Sensor táctil**

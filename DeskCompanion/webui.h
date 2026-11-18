@@ -65,7 +65,7 @@ details summary{cursor:pointer;color:var(--mut)}label{display:block;font-size:13
 <div class="row"><button class="main" id="saveX">Guardar</button><button class="sec" id="testB">Probar ahora</button></div>
 </section>
 
-<section class="card"><h2>Mensajes</h2><div id="msgs" class="mut">Sin mensajes todavía.</div></section>
+<section class="card"><h2>Mensajes</h2><div class="mut" style="margin-bottom:6px">🔒 El contenido es privado: solo se ve en la pantalla del buddy.</div><div id="msgs" class="mut">Sin mensajes todavía.</div></section>
 
 <section class="card"><details><summary>Ajustes</summary>
 <label>Nombre del companion</label><input id="sname" maxlength="20">
@@ -82,6 +82,7 @@ details summary{cursor:pointer;color:var(--mut)}label{display:block;font-size:13
 </details></section>
 </main><div id="toast"></div>
 <script>
+const PAGE_VER=")HTML" FW_VERSION R"HTML(";
 const $=s=>document.querySelector(s);let S=null,built=false;
 const toast=t=>{const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),1800)};
 async function api(p,d){const o=d?{method:'POST',body:new URLSearchParams(d)}:{};const r=await fetch(p,o);return r.json()}
@@ -101,8 +102,10 @@ function render(){if(!built)build();
  $('#auto').classList.toggle('on',S.auto);
  document.querySelectorAll('.ex').forEach(b=>b.classList.toggle('on',b.dataset.id==S.expr));
  const L=$('#msgs');if(!S.msgs.length){L.innerHTML='Sin mensajes todavía.';return}
- L.innerHTML=S.msgs.slice().reverse().map(m=>'<div class="msg"><div class="h"><span>'+esc(m.from)+' · '+ago(m.ago)+'</span><span class="'+(m.read?'seen':'')+'">'+(m.read?'✓✓ visto':'✓ entregado')+'</span></div><p>'+esc(m.text)+'</p></div>').join('')}
-async function load(){try{S=await api('/api/state');render()}catch(e){$('#st').textContent='sin conexión…'}}
+ L.innerHTML=S.msgs.slice().reverse().map(m=>'<div class="msg"><div class="h"><span>'+esc(m.from)+' · '+ago(m.ago)+'</span><span class="'+(m.read?'seen':'')+'">'+(m.read?'✓✓ visto':'✓ entregado')+'</span></div><p>✉️ Mensaje de '+esc(m.from)+'</p></div>').join('')}
+async function load(){try{S=await api('/api/state');
+ if(S.version!==PAGE_VER&&!sessionStorage.getItem('rl'+S.version)){sessionStorage.setItem('rl'+S.version,1);location.reload();return}
+ render()}catch(e){$('#st').textContent='sin conexión…'}}
 ['¡Hola! 👋','¿Café? ☕','Te quiero ❤️','¡Buen trabajo! 👍','¿Almorzamos?','Vení un toque','Ya llego 🏃'].forEach(t=>{const c=document.createElement('span');c.className='chip';c.textContent=t;c.onclick=()=>{$('#text').value=t;upd()};$('#chips').appendChild(c)});
 const upd=()=>$('#cnt').textContent=$('#text').value.length+'/280';$('#text').oninput=upd;
 $('#from').value=localStorage.getItem('db_from')||'';

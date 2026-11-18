@@ -384,7 +384,7 @@ void openNextMessage() {
 
 void dismissMessage() {
   int i = findMsg(currentMsgId);
-  if (i >= 0) msgs[i].read = true;
+  if (i >= 0) { msgs[i].read = true; msgs[i].text = ""; }   // privacidad: no queda guardado
   if (firstUnread() >= 0) startIntro();   // hay otro: flash y lo muestra
   else { setMode(MODE_FACE); react(); }   // contento de haberlo leido
 }
@@ -803,8 +803,7 @@ void handleState() {
   uint32_t now = millis();
   for (size_t i = 0; i < msgs.size(); i++) {
     if (i) j += ',';
-    j += "{\"id\":" + String(msgs[i].id) + ",\"from\":\"" + jsonEsc(msgs[i].from) + "\",\"text\":\"" +
-         jsonEsc(msgs[i].text) + "\",\"read\":" + (msgs[i].read ? "true" : "false") +
+    j += "{\"id\":" + String(msgs[i].id) + ",\"from\":\"" + jsonEsc(msgs[i].from) + "\",\"read\":" + (msgs[i].read ? "true" : "false") +
          ",\"ago\":" + String((now - msgs[i].at) / 1000) + "}";
   }
   j += "]}";
@@ -1026,7 +1025,10 @@ void handleOtaUpload() {
 }
 
 void setupServer() {
-  server.on("/", HTTP_GET, [] { server.send_P(200, "text/html; charset=utf-8", INDEX_HTML); });
+  server.on("/", HTTP_GET, [] {
+    server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");   // que el navegador no guarde la pagina vieja
+    server.send_P(200, "text/html; charset=utf-8", INDEX_HTML);
+  });
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/expr", HTTP_ANY, handleExpr);
   server.on("/api/auto", HTTP_ANY, handleAuto);
