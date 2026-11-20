@@ -7,7 +7,6 @@
 //  - calcula el "humor" del clima para que el buddy reaccione
 // ============================================================================
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 
 struct WeatherData {
   bool ok = false;
@@ -162,7 +161,8 @@ static String readHttp(Client& cli, int& status) {
   return b >= 0 ? resp.substring(b + 4) : String();
 }
 
-// Descarga el clima (bloquea ~0.5-2 s). Primero HTTP; si falla, HTTPS.
+// Descarga el clima (bloquea ~0.5-2 s). Por HTTP simple: HTTPS no entra en la
+// memoria de la OTA (la libreria de cifrado ocupa ~100 KB).
 static bool fetchWeather(float lat, float lon, WeatherData& w) {
   const char* host = "api.open-meteo.com";
   char path[300];
@@ -180,15 +180,6 @@ static bool fetchWeather(float lat, float lon, WeatherData& w) {
     if (cli.connect(host, 80, 4000)) {
       cli.print(req);
       body = readHttp(cli, status);
-    }
-  }
-  if (status != 200) {
-    WiFiClientSecure sec;
-    sec.setInsecure();                 // solo datos del clima publicos
-    sec.setTimeout(6);
-    if (sec.connect(host, 443)) {
-      sec.print(req);
-      body = readHttp(sec, status);
     }
   }
   if (status != 200) { w.error = status ? "HTTP " + String(status) : "sin conexion"; return false; }

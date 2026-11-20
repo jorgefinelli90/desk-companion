@@ -35,6 +35,13 @@ jobs:
       - name: Compilar
         run: pio run -e esp32c3
 
+      - name: Verificar que la OTA entra en la particion
+        run: |
+          SIZE=$(stat -c %s .pio/build/esp32c3/firmware.bin)
+          MAX=1310720   # app0/app1 de default.csv (0x140000)
+          echo "firmware.bin: $SIZE bytes de $MAX ($((SIZE * 100 / MAX))%)"
+          if [ "$SIZE" -gt "$MAX" ]; then echo "::error::El firmware no entra en la particion OTA"; exit 1; fi
+
       - name: Armar factory.bin y ota.bin
         run: |
           VER=$(grep -oP 'FW_VERSION\s+"\K[^"]+' DeskCompanion/config.h)

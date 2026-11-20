@@ -1,5 +1,5 @@
 #pragma once
-#define FW_VERSION     "1.4.0"       // subilo en cada cambio: se ve en la web y en la OTA
+#define FW_VERSION     "1.4.1"       // subilo en cada cambio: se ve en la web y en la OTA
 
 // Clave para la pagina de actualizacion http://deskbuddy.local/ota
 #define OTA_USER       "admin"
