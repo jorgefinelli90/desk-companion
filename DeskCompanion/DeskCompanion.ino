@@ -26,6 +26,7 @@
 #include "face.h"
 #include "schedule.h"
 #include "companion.h"
+#include "weather.h"
 #include "webui.h"
 
 #ifdef USE_SSD1306
@@ -40,7 +41,7 @@ Preferences prefs;
 FaceEngine face;
 
 // ---------------------------------------------------------------- estado
-enum Mode { MODE_FACE, MODE_MSG_INTRO, MODE_MSG, MODE_INFO, MODE_SETUP, MODE_CLOCK, MODE_BUDDY };
+enum Mode { MODE_FACE, MODE_MSG_INTRO, MODE_MSG, MODE_INFO, MODE_SETUP, MODE_CLOCK, MODE_BUDDY, MODE_WEATHER };
 Mode mode = MODE_FACE;
 uint32_t modeAt = 0;
 
@@ -58,6 +59,18 @@ bool clockOn = false;
 uint16_t clockEvery = 30;      // cada cuantos segundos
 uint8_t clockFor = 5;          // cuantos segundos se ve
 uint32_t lastClockEnd = 0;
+
+// Clima
+bool weatherOn = false;        // pantalla de clima periodica
+uint16_t weatherEvery = 60;
+uint8_t weatherFor = 5;
+bool weatherReact = true;      // gestos y frases segun el clima
+float wLat = -34.6037, wLon = -58.3816;   // Buenos Aires por defecto
+String wCity = "Buenos Aires";
+WeatherData wx;
+uint32_t lastWeatherEnd = 0, nextWeatherFetch = 0;
+WMood lastAlertMood = WM_NONE;
+uint32_t lastAlertAt = 0;
 
 // Apagado nocturno
 bool nightOn = false;
@@ -311,6 +324,11 @@ void autoTick(uint32_t now) {
   if (slot == lastSlot && now < nextAutoAt) return;
   lastSlot = slot;
   nextAutoAt = now + AUTO_CHANGE_MIN * 60000UL;
+  WMood m = weatherMood(wx);
+  if (weatherReact && m != WM_NONE && h >= 7 && random(100) < 40) {   // el clima tambien le cambia el animo
+    int e = exprIndexById(moodExpr(m));
+    if (e >= 0) { setExpression(e, false, false); return; }
+  }
   setExpression(pickForSlot(slot, savedExpr), false, false);
 }
 
@@ -553,6 +571,49 @@ void drawClock(uint32_t now) {
   drawCentered(d, 58);
 }
 
+// ---------------------------------------------------------------- clima
+String tempText(float t);
+String fillPhrase(const char* tpl);
+void showBuddy(const char* exprId, const String& text);
+
+void drawWeather(uint32_t now) {
+  if (!wx.ok) { setMode(MODE_FACE); return; }
+  drawWeatherIcon(u8g2, wx.code, wx.day, 28, 22, now);
+  u8g2.setFont(u8g2_font_logisoso24_tn);
+  String t = String((int)lroundf(wx.temp));
+  int w = u8g2.getStrWidth(t.c_str());
+  int x = 92 - (w + 8) / 2;
+  u8g2.drawStr(x, 34, t.c_str());
+  u8g2.drawCircle(x + w + 5, 13, 3);                       // simbolo de grados
+  u8g2.drawCircle(x + w + 5, 13, 2);
+  u8g2.setFont(u8g2_font_6x10_tf);
+  drawCentered(weatherDesc(wx.code), 51);
+  String l = tempText(wx.tmin) + " / " + tempText(wx.tmax);
+  if (wx.rainProb >= 20) l += "  lluvia " + String(wx.rainProb) + "%";
+  drawCentered(l, 63);
+}
+
+void updateWeather(uint32_t now) {
+  if (!online || (!weatherOn && !weatherReact)) return;
+  if (nextWeatherFetch && since(nextWeatherFetch, now) == 0) return;
+  bool ok = fetchWeather(wLat, wLon, wx);
+  if (!ok && wx.ok && since(wx.at, millis()) > 3 * 3600000UL) wx.ok = false;   // datos viejos: no los muestra
+  nextWeatherFetch = millis() + (ok ? WEATHER_REFRESH_MIN * 60000UL : 120000UL);
+  Serial.printf("Clima: %s %.1f° cod %d lluvia %d%%\n", ok ? "ok" : wx.error.c_str(), wx.temp, wx.code, wx.rainProb);
+}
+
+// Si el clima se pone "notable" (lluvia, tormenta, frio, calor), avisa una vez
+void weatherAlert(uint32_t now) {
+  if (!weatherReact || !wx.ok || mode != MODE_FACE || reactionUntil || screenOff) return;
+  WMood m = weatherMood(wx);
+  if (m == WM_NONE || m == WM_SUNNY) { lastAlertMood = m; return; }
+  if (m == lastAlertMood && since(lastAlertAt, now) < WEATHER_ALERT_GAP_MIN * 60000UL) return;
+  if (currentHour() >= 0 && (currentHour() < 7 || currentHour() >= 23)) return;   // de noche no molesta
+  lastAlertMood = m;
+  lastAlertAt = now;
+  showBuddy(moodExpr(m), fillPhrase(moodPhrase(m)));
+}
+
 // ---------------------------------------------------------------- companero
 String buddyText(int i) {
   String s = PHRASES[i].text;
@@ -560,15 +621,34 @@ String buddyText(int i) {
   return s;
 }
 
+String tempText(float t) { return String((int)lroundf(t)) + "°"; }
+
+String fillPhrase(const char* tpl) {
+  String s = tpl;
+  s.replace("{n}", owner.c_str());
+  s.replace("{t}", tempText(wx.temp).c_str());
+  s.replace("{p}", String(wx.rainProb).c_str());
+  return s;
+}
+
+void showBuddy(const char* exprId, const String& text) {
+  int e = exprIndexById(exprId);
+  if (e >= 0) face.set(e);
+  u8g2.setFont(u8g2_font_helvB10_tf);
+  wrapText(text, 112, buddyLines);
+  setMode(MODE_BUDDY);
+}
+
 void startBuddy(uint32_t now) {
+  WMood m = weatherMood(wx);
+  if (weatherReact && m != WM_NONE && random(100) < 35) {     // a veces habla del clima
+    showBuddy(moodExpr(m), fillPhrase(moodPhrase(m)));
+    return;
+  }
   int i = pickPhrase(currentHour(), buddyPhrase);
   if (i < 0) return;
   buddyPhrase = i;
-  int e = exprIndexById(PHRASES[i].expr);
-  if (e >= 0) face.set(e);
-  u8g2.setFont(u8g2_font_helvB10_tf);
-  wrapText(buddyText(i), 112, buddyLines);
-  setMode(MODE_BUDDY);
+  showBuddy(PHRASES[i].expr, buddyText(i));
 }
 
 void scheduleBuddy(uint32_t now) {
@@ -614,6 +694,7 @@ void renderFrame(uint32_t now) {
       case MODE_SETUP:     drawSetup(); break;
       case MODE_CLOCK:     drawClock(now); break;
       case MODE_BUDDY:     drawBuddy(now); break;
+      case MODE_WEATHER:   drawWeather(now); break;
     }
     if (mode == MODE_FACE) drawWifiHint(now);   // sin textos debajo de las caras
   }
@@ -630,6 +711,7 @@ void onTap() {
     case MODE_INFO:
     case MODE_SETUP:
     case MODE_CLOCK:     lastClockEnd = millis(); setMode(MODE_FACE); break;
+    case MODE_WEATHER:   lastWeatherEnd = millis(); setMode(MODE_FACE); break;
     case MODE_BUDDY:     face.set(savedExpr); setMode(MODE_FACE); break;
     case MODE_FACE:
       // pasa a la siguiente cara; en modo automatico queda hasta el proximo cambio
@@ -789,6 +871,18 @@ void handleState() {
   j += ",\"nightTo\":\"" + hhmm(nightTo) + "\"";
   j += ",\"nightMsgs\":" + String(nightMsgs ? "true" : "false");
   j += ",\"screenOff\":" + String(screenOff ? "true" : "false");
+  j += ",\"weather\":" + String(weatherOn ? "true" : "false");
+  j += ",\"weatherEvery\":" + String(weatherEvery);
+  j += ",\"weatherFor\":" + String(weatherFor);
+  j += ",\"weatherReact\":" + String(weatherReact ? "true" : "false");
+  j += ",\"city\":\"" + jsonEsc(wCity) + "\"";
+  j += ",\"wx\":{\"ok\":" + String(wx.ok ? "true" : "false");
+  if (wx.ok) {
+    j += ",\"temp\":" + String(wx.temp, 1) + ",\"min\":" + String(wx.tmin, 0) + ",\"max\":" + String(wx.tmax, 0) +
+         ",\"rain\":" + String(wx.rainProb) + ",\"desc\":\"" + weatherDesc(wx.code) + "\"" +
+         ",\"ago\":" + String(since(wx.at, millis()) / 60000);
+  }
+  j += ",\"error\":\"" + jsonEsc(wx.error) + "\"}";
   j += ",\"bright\":" + String(brightness);
   j += ",\"flip\":" + String(flipped ? "true" : "false");
   j += ",\"unread\":" + String(unreadCount());
@@ -898,8 +992,49 @@ void handleSettings() {
     nightMsgs = server.arg("nightMsgs").toInt() != 0;
     prefs.putBool("nMsg", nightMsgs);
   }
+  if (server.hasArg("weather")) {
+    weatherOn = server.arg("weather").toInt() != 0;
+    prefs.putBool("wOn", weatherOn);
+    lastWeatherEnd = millis();
+  }
+  if (server.hasArg("weatherEvery")) {
+    weatherEvery = constrain((int)server.arg("weatherEvery").toInt(), 5, 3600);
+    prefs.putUShort("wEv", weatherEvery);
+  }
+  if (server.hasArg("weatherFor")) {
+    weatherFor = constrain((int)server.arg("weatherFor").toInt(), 1, 60);
+    prefs.putUChar("wFor", weatherFor);
+  }
+  if (server.hasArg("weatherReact")) {
+    weatherReact = server.arg("weatherReact").toInt() != 0;
+    prefs.putBool("wReact", weatherReact);
+  }
+  if (server.hasArg("lat") && server.hasArg("lon")) {
+    float la = atof(server.arg("lat").c_str()), lo = atof(server.arg("lon").c_str());
+    if (la >= -90 && la <= 90 && lo >= -180 && lo <= 180 && (la != 0 || lo != 0)) {
+      wLat = la; wLon = lo;
+      prefs.putFloat("lat", wLat); prefs.putFloat("lon", wLon);
+      String c = sanitize(server.arg("city"), 30);
+      c.replace("\n", " ");
+      wCity = c.length() ? c : String("?");
+      prefs.putString("city", wCity);
+      wx.ok = false;
+      nextWeatherFetch = 0;            // descarga ya con la nueva ubicacion
+    }
+  }
+  if (weatherOn || weatherReact) { if (!wx.ok) nextWeatherFetch = 0; }
   wakeUntil = 0;
   scheduleBuddy(millis());
+  sendJson("{\"ok\":true}");
+}
+
+void handleWeatherTest() {
+  if (!wx.ok) { sendJson("{\"ok\":false,\"error\":\"todavia no hay datos del clima\"}", 400); return; }
+  if (mode == MODE_FACE || mode == MODE_CLOCK || mode == MODE_INFO || mode == MODE_BUDDY) {
+    WMood m = weatherMood(wx);
+    if (server.arg("show") == "1" || m == WM_NONE) { lastWeatherEnd = millis(); setMode(MODE_WEATHER); }
+    else showBuddy(moodExpr(m), fillPhrase(moodPhrase(m)));
+  }
   sendJson("{\"ok\":true}");
 }
 
@@ -1033,6 +1168,7 @@ void setupServer() {
   server.on("/api/expr", HTTP_ANY, handleExpr);
   server.on("/api/auto", HTTP_ANY, handleAuto);
   server.on("/api/buddy", HTTP_ANY, handleBuddyTest);
+  server.on("/api/weather", HTTP_ANY, handleWeatherTest);
   server.on("/api/msg", HTTP_ANY, handleMsg);
   server.on("/api/settings", HTTP_POST, handleSettings);
   server.on("/api/scan", HTTP_GET, handleScan);
@@ -1071,6 +1207,13 @@ void setup() {
   nightFrom  = prefs.getUShort("nFrom", 23 * 60);
   nightTo    = prefs.getUShort("nTo", 7 * 60);
   nightMsgs  = prefs.getBool("nMsg", false);
+  weatherOn    = prefs.getBool("wOn", false);
+  weatherEvery = prefs.getUShort("wEv", 60);
+  weatherFor   = prefs.getUChar("wFor", 5);
+  weatherReact = prefs.getBool("wReact", true);
+  wLat  = prefs.getFloat("lat", wLat);
+  wLon  = prefs.getFloat("lon", wLon);
+  wCity = prefs.getString("city", wCity.c_str());
   if (savedExpr >= EXPR_COUNT) savedExpr = 0;
   staSsid = prefs.getString("ssid", "");
   staPass = prefs.getString("pass", "");
@@ -1112,13 +1255,23 @@ void periodicScreens(uint32_t now) {
     lastClockEnd = now;
     setMode(MODE_FACE);
   }
+  if (mode == MODE_WEATHER && since(modeAt, now) > weatherFor * 1000UL) {
+    lastWeatherEnd = now;
+    if (clockOn && since(lastClockEnd, now) + 3000 > clockEvery * 1000UL) lastClockEnd = now;  // que no se pisen
+    setMode(MODE_FACE);
+  }
   if (mode != MODE_FACE || reactionUntil || screenOff) return;
   if (buddyOn && nextBuddyAt && since(nextBuddyAt, now) > 0) {
     scheduleBuddy(now);
     startBuddy(now);
     return;
   }
-  if (clockOn && timeValid() && since(lastClockEnd, now) > clockEvery * 1000UL) setMode(MODE_CLOCK);
+  if (clockOn && timeValid() && since(lastClockEnd, now) > clockEvery * 1000UL) {
+    setMode(MODE_CLOCK);
+    if (weatherOn && since(lastWeatherEnd, now) + 3000 > weatherEvery * 1000UL) lastWeatherEnd = now + clockFor * 1000UL;
+    return;
+  }
+  if (weatherOn && wx.ok && since(lastWeatherEnd, now) > weatherEvery * 1000UL) setMode(MODE_WEATHER);
 }
 
 void loop() {
@@ -1130,6 +1283,8 @@ void loop() {
   wifiLoop(now);
   autoTick(now);
   nightTick(now);
+  updateWeather(now);
+  weatherAlert(now);
   periodicScreens(now);
 
   if (reactionUntil && since(reactionUntil, now) > 0) { reactionUntil = 0; face.set(savedExpr); }

@@ -1,5 +1,5 @@
 #pragma once
-#define FW_VERSION     "1.3.1"       // subilo en cada cambio: se ve en la web y en la OTA
+#define FW_VERSION     "1.4.0"       // subilo en cada cambio: se ve en la web y en la OTA
 
 // Clave para la pagina de actualizacion http://deskbuddy.local/ota
 #define OTA_USER       "admin"
@@ -29,6 +29,13 @@
 // Mexico (CDMX) = "CST6". Chile = "<-04>4<-03>,M9.1.6/24,M4.1.6/24"
 #define TZ_INFO        "<-03>3"
 #define AUTO_CHANGE_MIN 10           // en modo automatico, cambia de cara cada X minutos
+
+// ---------------------------------------------------------------- Clima
+#define WEATHER_REFRESH_MIN  20      // cada cuanto actualiza el clima
+#define WEATHER_ALERT_GAP_MIN 180    // no repite el mismo aviso antes de X minutos
+#define RAIN_PROB_ALERT 50           // % de lluvia en las proximas 3 h para avisar
+#define COLD_TEMP      12            // °C o menos = frio
+#define HOT_TEMP       30            // °C o mas = calor
 
 // ---------------------------------------------------------------- Mensajes
 #define MSG_HISTORY    12            // mensajes guardados en RAM

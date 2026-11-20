@@ -67,6 +67,10 @@ El nivel del sensor en reposo se detecta solo al arrancar, así que anda tanto c
 
 **Reloj (opcional):** en la web, sección *Extras*, se activa *Mostrar el reloj*. Aparece cada 30 s durante 5 s; los dos valores se pueden cambiar.
 
+**Clima (opcional):** en *Extras → 🌦 Mostrar el clima* aparece cada X segundos una pantalla con un ícono animado (sol, luna, nubes, lluvia, tormenta, nieve, niebla), la temperatura, la mínima y la máxima, y la probabilidad de lluvia. La ciudad se busca desde la web (por defecto Buenos Aires). Los datos son de [Open-Meteo](https://open-meteo.com), que no pide cuenta, y se actualizan cada 20 minutos.
+
+**☂️ Reaccionar al clima** (viene activado): si va a llover (50% o más en las próximas horas), está lloviendo, hay tormenta, hace frío (12° o menos) o calor (30° o más), avisa una vez con una cara y una frase ("Va a llover, Kharlita. ¡Llevá paraguas!", "¡Qué frío! Abrigate, Kharlita"). Además, el clima aparece en el modo automático y en las frases del modo compañero. Para eso hay tres caras nuevas: *Lluvioso*, *Con frío* y *Con calor*. Los umbrales se cambian en `config.h`.
+
 **Apagado nocturno (opcional):** en *Extras → 🌙 Apagar la pantalla de noche* se elige desde qué hora hasta qué hora (por ejemplo, de 23:00 a 07:00; puede cruzar la medianoche). De noche:
 - tocando el sensor, la pantalla se prende 15 s;
 - los mensajes que llegan esperan y se muestran apenas se prende (a la mañana o con un toque), salvo que marques *Prender igual si llega un mensaje*;
@@ -88,7 +92,7 @@ curl "http://deskbuddy.local/api/auto?on=1"        # vuelve al modo por hora
 curl "http://deskbuddy.local/api/state"
 ```
 
-IDs de expresiones: `neutral happy joy love sad cry angry surprised scared sleepy sleeping wink confused suspicious thinking dizzy excited starstruck bored cool shy mischief dead`
+IDs de expresiones: `neutral happy joy love sad cry angry surprised scared sleepy sleeping wink confused suspicious thinking dizzy excited starstruck bored cool shy mischief dead rainy cold hot`
 
 ## Agregar o modificar expresiones
 

@@ -41,6 +41,8 @@ enum : uint16_t {
   FX_HEARTS   = 1 << 10,
   FX_EXCLAIM  = 1 << 11,
   FX_DOTS     = 1 << 12,
+  FX_RAIN     = 1 << 13,   // lluvia cayendo
+  FX_FROST    = 1 << 14,   // copitos de nieve
 };
 
 struct Expression {
@@ -86,6 +88,10 @@ static const Expression EXPRESSIONS[] = {
   {"shy",        "Tímido",       "☺️",  N,          N,          24,24,10,  0, 0,25, -35, 55,100, M_SMALL, A_NONE,    FX_BLUSH,                   false},
   {"mischief",   "Travieso",     "😏",  N,          N,          30,26, 8, 50,10,35,   0,  0,100, M_GRIN,  A_NONE,    0,                          false},
   {"dead",       "KO",           "😵",  EYE_X,      EYE_X,      30,30, 9,  0, 0, 0,   0,  0,100, M_TONGUE,A_NONE,    0,                          false},
+  // caras del clima
+  {"rainy",      "Lluvioso",     "🌧️", N,          N,          28,26, 9,  0,40, 0,   0, 35,100, M_FROWN, A_BREATHE, FX_RAIN,                    false},
+  {"cold",       "Con frío",     "🥶",  N,          N,          26,20, 8, 30,30, 0,   0,  0,100, M_WAVY,  A_SHAKE,   FX_FROST,                   false},
+  {"hot",        "Con calor",    "🥵",  N,          N,          30,24, 9, 45,45, 0,   0, 25,100, M_TONGUE,A_BREATHE, FX_SWEAT,                   false},
 };
 #undef N
 
@@ -466,6 +472,22 @@ private:
           g->drawLine(U(cx + sx * a), U(cyy + sy * b), U(cx + sx * a), U(cyy + sy * a));
           g->drawLine(U(cx + sx * a), U(cyy + sy * a), U(cx + sx * b), U(cyy + sy * a));
         }
+    }
+    if (fx & FX_RAIN) {                  // gotitas cayendo por toda la pantalla
+      for (int k = 0; k < 7; k++) {
+        float p = fmodf(t / 900.f + k * 0.37f, 1.f);
+        int x = (k * 19 + 7) % 128, y = R(p * 70) - 6;
+        if (y < 0) continue;
+        g->drawLine(U(x), U(y), U(x - 2), U(y + 5));
+      }
+    }
+    if (fx & FX_FROST) {                 // copitos
+      for (int k = 0; k < 5; k++) {
+        float p = fmodf(t / 3000.f + k * 0.29f, 1.f);
+        int x = R((k * 27 + 9) % 128 + 3 * sinf(t * 0.002f + k)), y = R(p * 68) - 2;
+        if (y < 2 || x < 2) continue;
+        g->drawHLine(U(x - 2), U(y), 5); g->drawVLine(U(x), U(y - 2), 5);
+      }
     }
     if (fx & FX_HEARTS) {
       for (int k = 0; k < 2; k++) {

@@ -57,6 +57,17 @@ details summary{cursor:pointer;color:var(--mut)}label{display:block;font-size:13
 <div class="row"><div><label>Nombre</label><input id="owner" maxlength="16"></div>
 <div><label>cada (minutos, aprox.)</label><input type="number" id="buddyEvery" min="1" max="240"></div></div>
 <hr>
+<label class="sw"><input type="checkbox" id="weather"> 🌦 Mostrar el clima</label>
+<div class="mut" id="wxnow">Sin datos del clima todavía.</div>
+<div class="row"><div><label>cada (segundos)</label><input type="number" id="weatherEvery" min="5" max="3600"></div>
+<div><label>durante (segundos)</label><input type="number" id="weatherFor" min="1" max="60"></div></div>
+<label>Ciudad</label>
+<div class="row" style="margin-top:4px"><input id="city" placeholder="Ej: Rosario" style="flex:2"><button class="sec" id="findCity" style="flex:1">Buscar</button></div>
+<div class="mut" id="cityRes"></div>
+<label class="sw" style="margin-top:10px"><input type="checkbox" id="weatherReact"> ☂️ Reaccionar al clima</label>
+<div class="mut">Si va a llover, hace frío o mucho calor, pone caras y te lo dice (“Va a llover, Kharlita. ¡Llevá paraguas!”).</div>
+<div class="row"><button class="sec" id="testW">Ver el clima ahora</button></div>
+<hr>
 <label class="sw"><input type="checkbox" id="night"> 🌙 Apagar la pantalla de noche</label>
 <div class="row"><div><label>desde</label><input type="time" id="nightFrom"></div>
 <div><label>hasta</label><input type="time" id="nightTo"></div></div>
@@ -94,12 +105,16 @@ function build(){const g=$('#grid'),m=$('#mexpr');
   const o=document.createElement('option');o.value=x.id;o.textContent=x.emoji+' '+x.name;m.appendChild(o)});
  $('#ver').textContent=S.version;
  $('#clock').checked=S.clock;$('#clockEvery').value=S.clockEvery;$('#clockFor').value=S.clockFor;
+ $('#weather').checked=S.weather;$('#weatherEvery').value=S.weatherEvery;$('#weatherFor').value=S.weatherFor;
+ $('#weatherReact').checked=S.weatherReact;$('#city').value=S.city;
  $('#night').checked=S.night;$('#nightFrom').value=S.nightFrom;$('#nightTo').value=S.nightTo;$('#nightMsgs').checked=S.nightMsgs;
  $('#buddy').checked=S.buddy;$('#buddyEvery').value=S.buddyEvery;$('#owner').value=S.owner;$('#sname').value=S.name;$('#bright').value=S.bright;$('#bv').textContent=S.bright;$('#flip').checked=S.flip;built=true}
 function render(){if(!built)build();
  const cur=S.exprs.find(x=>x.id==S.expr)||S.exprs[0];$('#face').textContent=cur.emoji;$('#nm').textContent=S.name;document.title=S.name;
- $('#st').textContent=S.time+(S.screenOff?' · 🌙 pantalla apagada':'')+' · '+(S.online?'WiFi '+S.ssid+' · '+S.ip:(S.ap?'Modo AP · '+S.ssid:'buscando '+S.ssid))+(S.unread?' · '+S.unread+' sin leer':'');
+ $('#st').textContent=S.time+(S.wx.ok?' · '+Math.round(S.wx.temp)+'°':'')+(S.screenOff?' · 🌙 pantalla apagada':'')+' · '+(S.online?'WiFi '+S.ssid+' · '+S.ip:(S.ap?'Modo AP · '+S.ssid:'buscando '+S.ssid))+(S.unread?' · '+S.unread+' sin leer':'');
  $('#auto').classList.toggle('on',S.auto);
+ const w=S.wx;$('#wxnow').textContent=w.ok?('Ahora en '+S.city+': '+Math.round(w.temp)+'° '+w.desc+' · '+w.min+'°/'+w.max+'°'+(w.rain>=20?' · lluvia '+w.rain+'%':'')):
+  (w.error?'Clima: error ('+w.error+')':'Sin datos del clima todavía (necesita WiFi con internet).');
  document.querySelectorAll('.ex').forEach(b=>b.classList.toggle('on',b.dataset.id==S.expr));
  const L=$('#msgs');if(!S.msgs.length){L.innerHTML='Sin mensajes todavía.';return}
  L.innerHTML=S.msgs.slice().reverse().map(m=>'<div class="msg"><div class="h"><span>'+esc(m.from)+' · '+ago(m.ago)+'</span><span class="'+(m.read?'seen':'')+'">'+(m.read?'✓✓ visto':'✓ entregado')+'</span></div><p>✉️ Mensaje de '+esc(m.from)+'</p></div>').join('')}
@@ -114,8 +129,18 @@ $('#send').onclick=async()=>{const text=$('#text').value.trim();if(!text)return 
  const r=await api('/api/msg',{from,text,expr:$('#mexpr').value});if(r.ok){$('#text').value='';upd();toast('Enviado ✉️');load()}else toast(r.error||'Error')};
 $('#auto').onclick=async()=>{await api('/api/auto',{on:S.auto?0:1});toast(S.auto?'Cara fija':'🕘 Automático por hora');load()};
 $('#saveX').onclick=async()=>{await api('/api/settings',{clock:$('#clock').checked?1:0,clockEvery:$('#clockEvery').value,clockFor:$('#clockFor').value,
+ weather:$('#weather').checked?1:0,weatherEvery:$('#weatherEvery').value,weatherFor:$('#weatherFor').value,weatherReact:$('#weatherReact').checked?1:0,
+ ...(geo?{lat:geo.lat,lon:geo.lon,city:geo.city}:{}),
  night:$('#night').checked?1:0,nightFrom:$('#nightFrom').value,nightTo:$('#nightTo').value,nightMsgs:$('#nightMsgs').checked?1:0,
- buddy:$('#buddy').checked?1:0,buddyEvery:$('#buddyEvery').value,owner:$('#owner').value});toast('Guardado');load()};
+ buddy:$('#buddy').checked?1:0,buddyEvery:$('#buddyEvery').value,owner:$('#owner').value});toast('Guardado');geo=null;$('#cityRes').textContent='';load()};
+let geo=null;
+$('#findCity').onclick=async()=>{const q=$('#city').value.trim();if(!q)return;$('#cityRes').textContent='Buscando…';
+ try{const r=await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&language=es&name='+encodeURIComponent(q))).json();
+  const c=r.results&&r.results[0];if(!c){$('#cityRes').textContent='No la encontré';return}
+  geo={lat:c.latitude.toFixed(4),lon:c.longitude.toFixed(4),city:c.name};
+  $('#cityRes').textContent='📍 '+[c.name,c.admin1,c.country].filter(Boolean).join(', ')+' — tocá Guardar'}
+ catch(e){$('#cityRes').textContent='Sin internet en este celular para buscar'}};
+$('#testW').onclick=async()=>{const r=await api('/api/weather',{show:1});toast(r.ok?'🌦 Mirá la pantalla':(r.error||'Error'))};
 $('#testB').onclick=async()=>{await api('/api/buddy',{});toast('💬 Mirá la pantalla')};
 $('#bright').oninput=e=>$('#bv').textContent=e.target.value;
 $('#save').onclick=async()=>{await api('/api/settings',{name:$('#sname').value,bright:$('#bright').value,flip:$('#flip').checked?1:0});toast('Guardado');load()};
